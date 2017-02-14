@@ -6,8 +6,14 @@ import re
 import sys
 import glob
 import shlex
-import ninja_syntax
 import fnmatch
+
+try:
+    import ninja_syntax
+except ImportError:
+    # Sometimes we can't import a sibling file. This makes it possible.
+    sys.path.append(os.path.dirname(__file__))
+    import ninja_syntax
 
 def makeNinjaFile(target, source, env):
     assert not source
@@ -88,6 +94,16 @@ class NinjaFile(object):
             if build['rule'] == 'SCONS':
                 build.setdefault('implicit', []).append(self.ninja_file)
 
+    def make_command(self, cmd):
+        lines = cmd.split('\n')
+        if len(lines) == 1:
+            return cmd # no changes needed
+
+        cmd = ' && '.join(lines)
+        if self.globalEnv.TargetOSIs('windows'):
+            cmd = 'cmd /c ' + cmd
+        return cmd
+
     def handle_build_node(self, n):
         # TODO break this function up
         assert n.has_builder()
@@ -137,8 +153,9 @@ class NinjaFile(object):
                 assert len(n.executor.get_action_list()) == 1
                 action = n.executor.get_action_list()[0]
 
-        isDistScr = len(str(n.executor).split('\n')) > 1 # currently just DistScr stuff
-        if isinstance(action, SCons.Action.FunctionAction) or isDistScr:
+        # TODO find a better way to find things that are functions
+        needs_scons = (isinstance(action, SCons.Action.FunctionAction) or '(' in str(n.executor))
+        if needs_scons:
             # Build all scons generated headers in a single pass.
             build_list = (self.builds
                           if not generating_header
@@ -151,10 +168,7 @@ class NinjaFile(object):
                 inputs=strmap(sources),
                 implicit=implicit_deps
                 ))
-
             return
-
-        assert isinstance(action, (SCons.Action.CommandAction, SCons.Action.CommandGeneratorAction))
 
         tool = str(n.executor).split(None, 1)[0]
         if tool not in ('$CC', '$CXX', '$LINK', '$AR'):
@@ -163,18 +177,22 @@ class NinjaFile(object):
                 outputs=strmap(targets),
                 inputs=strmap(sources),
                 implicit=implicit_deps,
-                variables={'command': myEnv.subst(str(n.executor), executor=n.executor)}
+                variables={
+                    'command': self.make_command(myEnv.subst(str(n.executor), executor=n.executor)),
+                    }
                 ))
             return
 
         self.tool_paths.add(myEnv.WhereIs(tool))
 
         tool = tool.strip('${}')
-        com = str(n.executor).replace('$TARGET', '$out').replace('$SOURCES', '$in')
+        cmd = self.make_command(str(n.executor).replace('$TARGET', '$out')
+                                               .replace('$SOURCES', '$in'))
         if tool in self.tool_commands:
-            assert com.replace('$$', '$') == self.tool_commands[tool]
+            assert cmd == self.tool_commands[tool]
         else:
-            self.tool_commands[tool] = com.replace('$$', '$')
+            self.tool_commands[tool] = cmd
+
 
         libdeps = []
         if tool == 'LINK':
@@ -183,7 +201,7 @@ class NinjaFile(object):
             libdeps = libdeps_objs.split()
 
         myVars = {}
-        for word in shlex.split(com):
+        for word in shlex.split(cmd):
             if not word.startswith('$'): continue
             if word in ('$in', '$out'): continue
 
@@ -223,7 +241,7 @@ class NinjaFile(object):
 
         # make ninja file directly executable. (bit set later)
         # can't use ninja.comment() because it adds a space after the !
-        file.write('#!%s -f\n'%self.globalEnv.WhereIs('ninja'))
+        file.write('#!/usr/bin/env ninja -f\n')
 
         ninja = ninja_syntax.Writer(file, width=100)
 
@@ -286,9 +304,11 @@ class NinjaFile(object):
         ninja.rule('EXEC', command='$command')
 
         if 'AR' in self.tool_commands:
+            # We need to remove $out because the file existing can confuse ar. This is particularly
+            # a problem when switching between thin and non-thin archive files.
             ninja.rule('AR',
-                command = self.tool_commands['AR'],
-                description = 'AR $out')
+                command = 'rm -f $out && ' + self.tool_commands['AR'],
+                description = 'STATICLIB $out')
 
     def write_builds(self, ninja):
         ninja.newline()
@@ -335,8 +355,19 @@ def configure(conf, env):
         print "ccache is used automatically if it is installed."
         Exit(1)
 
+    ccache = env.WhereIs('ccache')
+    if not ccache:
+        # check a few places that are often on $PATH but scons hides.
+        if os.path.exists('/usr/local/bin/ccache'):
+            ccache = '/usr/local/bin/ccache'
+        elif os.path.exists('/opt/local/bin/ccache'):
+            ccache = '/opt/local/bin/ccache'
+
+    if not ccache or GetOption('cache_disable'):
+        ccache = ''
+    env['_NINJA_CCACHE'] = ccache
+
     action_str = "Generating $TARGET"
-    env['_NINJA_CCACHE'] = '' if GetOption('cache_disable') else env.WhereIs('ccache')
     if env['_NINJA_CCACHE']:
         action_str += " with ccache support (pass --no-cache to scons to disable)"
         if env.ToolchainIs('clang'):
