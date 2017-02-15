@@ -283,6 +283,10 @@ class NinjaFile(object):
             os.chmod(self.ninja_file, 0755)
 
     def write_vars(self, ninja):
+        # We can probably drop this to 1.5, but I've only tested with 1.7.
+        ninja.newline()
+        ninja.variable('ninja_required_version', '1.7')
+
         ninja.newline()
         ninja.variable('scons_args',
                 ['"%s"'%arg for arg in sys.argv[1:] if not arg in COMMAND_LINE_TARGETS])
@@ -394,9 +398,23 @@ class NinjaFile(object):
                 implicit=['buildscripts/scons.py'] + scons_dependencies)
 
 def configure(conf, env):
+    if not COMMAND_LINE_TARGETS:
+        print "*** To prevent PEBKACs, the ninja module requires that you pass a target to scons."
+        print "*** You probably forgot to include build.ninja on the command line"
+        print "***"
+        print "*** If you really want to build mongod using scons, do so explicitly or pass the"
+        print "*** --modules= flag to disable the ninja module."
+        Exit(1)
+
     ninja_files = [str(t) for t in BUILD_TARGETS if str(t).endswith('.ninja')]
     if not ninja_files:
         return
+
+    if 'ninja' not in env.subst("$VARIANT_DIR"):
+        print "*** WARNING: you should use a dedicated VARIANT_DIR for ninja builds to prevent"
+        print "*** conflicts with scons builds. You can suppress this by including 'ninja'"
+        print "*** in your VARIANT_DIR string."
+        print '***'
 
     if GetOption('cache'):
         print "Remove --cache flags to make ninja generation work."
@@ -422,6 +440,11 @@ def configure(conf, env):
             # Needed to make clang++ play nicely with ccache. Ideally this would use
             # AddToCCFLAGSIfSupported but that is available to modules.
             env.Append(CCFLAGS=["-Qunused-arguments"])
+
+        if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
+            print "*** WARNING: to get the most out of ccache pass these flags to scons"
+            print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
+            print '***'
 
     if env.ToolchainIs('gcc', 'clang'):
         # ninja buffers stdout which causes gcc and clang not to emit color. Force it on and let
