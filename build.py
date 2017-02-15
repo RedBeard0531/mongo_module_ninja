@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import glob
+import json
 import shlex
 import fnmatch
 
@@ -15,6 +16,9 @@ except ImportError:
     sys.path.append(os.path.dirname(__file__))
     import ninja_syntax
 
+subst_file_script = os.path.join(os.path.dirname(__file__), 'subst_file.py')
+test_list_script = os.path.join(os.path.dirname(__file__), 'test_list.py')
+
 def makeNinjaFile(target, source, env):
     assert not source
     ninja_file = NinjaFile(str(target[0]), env)
@@ -24,6 +28,18 @@ def rglob(pattern, root='.') :
     return [os.path.join(path, f)
             for path, dirs, files in os.walk(root)
             for f in fnmatch.filter(files, pattern)]
+
+def where_is(env, exe):
+    path = env.WhereIs(exe)
+    if not path:
+        # check a few places that are often on $PATH but scons hides.
+        if os.path.exists('/usr/local/bin/'+exe):
+            path = '/usr/local/bin/ccache'
+        elif os.path.exists('/opt/local/bin/'+exe):
+            path = '/opt/local/bin/'+exe
+
+    # Normalize missing to '' rather than None
+    return path if path else ''
 
 def strmap(list):
     for node in list:
@@ -42,10 +58,18 @@ class NinjaFile(object):
         self.builds = []
         self.built_targets = set()
         self.generated_headers = set()
-        self.scons_generated_header_builds = []
 
         self.find_aliases()
         self.find_build_nodes()
+
+        assert 'COPY' not in self.vars
+        if self.globalEnv.TargetOSIs('windows'):
+            self.vars['COPY'] = 'copy'
+        else:
+            self.vars['COPY'] = 'install' # install seems faster than cp.
+
+        assert 'PYTHON' not in self.vars
+        self.vars['PYTHON'] = self.globalEnv.WhereIs('$PYTHON')
 
     def find_aliases(self):
         for alias in SCons.Node.Alias.default_ans.values():
@@ -70,22 +94,6 @@ class NinjaFile(object):
             if id(n.executor) not in seen:
                 seen.add(id(n.executor))
                 self.handle_build_node(n)
-
-        # Group all scons generated headers into a single scons run. Since all must finish before
-        # compiling starts, we want it to be as fast as possible so we only pay the scons startup
-        # cost once.
-        # TODO use ninja batching if it is ever implemented.
-        scons_generated_header_build = dict(rule='SCONS')
-        for build in self.scons_generated_header_builds:
-            for field in build:
-                if field == 'rule':
-                    assert build[field] == 'SCONS'
-                else:
-                    scons_generated_header_build.setdefault(field, set()).update(build[field])
-        for field in scons_generated_header_build:
-            if field != 'rule':
-                scons_generated_header_build[field] = sorted(scons_generated_header_build[field])
-        self.builds.append(scons_generated_header_build)
 
         for build in self.builds:
             # Make everything build by scons depend on the ninja file. This makes them transitively
@@ -146,6 +154,41 @@ class NinjaFile(object):
                 ))
             return
 
+        if action == SCons.Tool.textfile._subst_builder.action:
+            implicit_deps.append(subst_file_script)
+            self.builds.append(dict(
+                rule='SCRIPT_RSP',
+                outputs=strmap(targets),
+                inputs=strmap(sources),
+                implicit=implicit_deps,
+                variables={
+                    'rspfile_content': ninja_syntax.escape(json.dumps(myEnv['SUBST_DICT'])),
+                    'script': subst_file_script,
+                    }
+                ))
+            return
+
+        if len(targets) == 1 and str(targets[0]).endswith('tests.txt'):
+            if len(sources) == 1:
+                assert isinstance(sources[0], SCons.Node.Python.Value)
+                tests = sources[0].value
+            else:
+                # Unpatched builds put the list in sources.
+                tests = strmap(sources)
+
+            implicit_deps.extend([test_list_script, self.ninja_file])
+            self.builds.append(dict(
+                rule='SCRIPT_RSP',
+                outputs=strmap(targets),
+                inputs=[],
+                implicit=implicit_deps,
+                variables={
+                    'rspfile_content': ninja_syntax.escape(json.dumps(tests)),
+                    'script': test_list_script,
+                    }
+                ))
+            return
+
         if isinstance(action, SCons.Action.ListAction):
             # Remove the noop_action we attach to thin archive builds.
             if len(action.list) == 2 and str(n.executor).split('\n')[1].startswith('noop_action'):
@@ -173,17 +216,13 @@ class NinjaFile(object):
                 assert len(n.executor.get_action_list()) == 1
                 action = n.executor.get_action_list()[0]
 
+
         # TODO find a better way to find things that are functions
         needs_scons = (isinstance(n.executor.get_action_list()[0], SCons.Action.FunctionAction)
                        or '(' in str(n.executor))
         if needs_scons:
-            # Build all scons generated headers in a single pass.
-            build_list = (self.builds
-                          if not generating_header
-                          else self.scons_generated_header_builds)
-
             sources = filter(lambda s: not isinstance(s, SCons.Node.Python.Value), sources)
-            build_list.append(dict(
+            self.builds.append(dict(
                 rule='SCONS',
                 outputs=strmap(targets),
                 inputs=strmap(sources),
@@ -262,11 +301,11 @@ class NinjaFile(object):
 
         # make ninja file directly executable. (bit set later)
         # can't use ninja.comment() because it adds a space after the !
-        file.write('#!/usr/bin/env ninja -f\n')
+        ninja_exe = where_is(self.globalEnv, 'ninja')
+        if ninja_exe:
+            file.write('#!%s -f\n\n'%ninja_exe)
 
         ninja = ninja_syntax.Writer(file, width=100)
-
-        ninja.newline()
         ninja.comment('Generated by scons. DO NOT EDIT.')
 
         self.write_vars(ninja)
@@ -279,7 +318,7 @@ class NinjaFile(object):
             ninja.default(default)
 
         ninja.close()
-        if not self.globalEnv.TargetOSIs('windows'):
+        if ninja_exe and not self.globalEnv.TargetOSIs('windows'):
             os.chmod(self.ninja_file, 0755)
 
     def write_vars(self, ninja):
@@ -306,19 +345,23 @@ class NinjaFile(object):
         # ninja ignores leading spaces so this will work fine if empty.
         ccache = self.globalEnv['_NINJA_CCACHE']
 
-        #TODO windows
+
+        ninja.rule('EXEC', command='$command')
+        ninja.rule('INSTALL',
+                command = '$COPY $in $out',
+                description = 'INSTALL $out')
+
+        ninja.rule('SCRIPT_RSP',
+            command = '$PYTHON $script $in $out $out.rsp',
+            rspfile = '$out.rsp',
+            rspfile_content = '$rspfile_content',
+            restat = 1,
+            description = "GEN $out")
         ninja.rule('SCONS',
-            command = '%s %s -Q $scons_args $out'%(self.globalEnv.WhereIs('$PYTHON'), sys.argv[0]),
+            command = '$PYTHON %s -Q $scons_args $out'%(sys.argv[0]),
             pool = 'console',
             description = 'SCONSGEN $out',
             restat=1)
-
-        ninja.rule('EXEC', command='$command')
-
-        if self.globalEnv.TargetOSIs('windows'):
-            ninja.rule('INSTALL', command = 'copy $in $out')
-        else:
-            ninja.rule('INSTALL', command = 'install $in $out') # install seems faster than cp.
 
         if 'CXX' in self.tool_commands:
             ninja.rule('CXX',
@@ -389,7 +432,7 @@ class NinjaFile(object):
 
         ninja.newline()
         ninja.rule('GENERATOR',
-            command = "%s %s $scons_args $out"%(self.globalEnv.WhereIs('$PYTHON'), sys.argv[0]),
+            command = "$PYTHON %s $scons_args $out"%(sys.argv[0]),
             pool = 'console',
             generator = 1,
             description = 'Regenerating $out',
@@ -421,35 +464,27 @@ def configure(conf, env):
         print "ccache is used automatically if it is installed."
         Exit(1)
 
-    ccache = env.WhereIs('ccache')
-    if not ccache:
-        # check a few places that are often on $PATH but scons hides.
-        if os.path.exists('/usr/local/bin/ccache'):
-            ccache = '/usr/local/bin/ccache'
-        elif os.path.exists('/opt/local/bin/ccache'):
-            ccache = '/opt/local/bin/ccache'
-
-    if not ccache or GetOption('cache_disable'):
-        ccache = ''
-    env['_NINJA_CCACHE'] = ccache
-
     action_str = "Generating $TARGET"
-    if env['_NINJA_CCACHE']:
-        action_str += " with ccache support (pass --no-cache to scons to disable)"
-        if env.ToolchainIs('clang'):
-            # Needed to make clang++ play nicely with ccache. Ideally this would use
-            # AddToCCFLAGSIfSupported but that is available to modules.
-            env.Append(CCFLAGS=["-Qunused-arguments"])
-
-        if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
-            print "*** WARNING: to get the most out of ccache pass these flags to scons"
-            print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
-            print '***'
-
     if env.ToolchainIs('gcc', 'clang'):
         # ninja buffers stdout which causes gcc and clang not to emit color. Force it on and let
         # ninja filter out the colors if the real stdout is redirected.
         env.Append(CCFLAGS=["-fdiagnostics-color=always"])
+
+        if GetOption('cache_disable'):
+            env['_NINJA_CCACHE'] = ''
+        else:
+            env['_NINJA_CCACHE'] = where_is(env, 'ccache')
+        if env['_NINJA_CCACHE']:
+            action_str += " with ccache support (pass --no-cache to scons to disable)"
+            if env.ToolchainIs('clang'):
+                # Needed to make clang++ play nicely with ccache. Ideally this would use
+                # AddToCCFLAGSIfSupported but that is available to modules.
+                env.Append(CCFLAGS=["-Qunused-arguments"])
+
+            if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
+                print "*** WARNING: to get the most out of ccache, pass these flags to scons:"
+                print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
+                print '***'
 
     for ninja_file in ninja_files:
         cmd = env.Command(ninja_file, [], Action(makeNinjaFile, action_str))
