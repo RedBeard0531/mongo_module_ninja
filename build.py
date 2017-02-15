@@ -146,15 +146,36 @@ class NinjaFile(object):
                 ))
             return
 
-        # Remove the noop_action we use to fake ranlib with thin archives.
-        if isinstance(action, SCons.Action.ListAction) and len(action.list) == 2:
-            if str(n.executor).split('\n')[1].startswith('noop_action'):
+        if isinstance(action, SCons.Action.ListAction):
+            # Remove the noop_action we attach to thin archive builds.
+            if len(action.list) == 2 and str(n.executor).split('\n')[1].startswith('noop_action'):
                 n.executor.set_action_list(action.list[0])
                 assert len(n.executor.get_action_list()) == 1
                 action = n.executor.get_action_list()[0]
 
+            # Strip out the functions from shared library builds.
+            if '\n$SHLINK' in str(n.executor):
+                lines = str(n.executor).split('\n')
+                assert len(lines) == 3
+
+                # Run the check now. It doesn't need to happen at runtime.
+                assert lines[0] == 'SharedFlagChecker(target, source, env)'
+                SCons.Defaults.SharedFlagChecker(targets, sources, myEnv)
+
+                # We don't need this right now, so just assert that we don't. It can be added if we
+                # ever need it.
+                assert lines[2] == 'LibSymlinksActionFunction(target, source, env)'
+                for target in targets:
+                    assert not getattr(getattr(targets[0],'attributes', None), 'shliblinks', None)
+
+                # Now just make it the "real" action.
+                n.executor.set_action_list(action.list[1])
+                assert len(n.executor.get_action_list()) == 1
+                action = n.executor.get_action_list()[0]
+
         # TODO find a better way to find things that are functions
-        needs_scons = (isinstance(action, SCons.Action.FunctionAction) or '(' in str(n.executor))
+        needs_scons = (isinstance(n.executor.get_action_list()[0], SCons.Action.FunctionAction)
+                       or '(' in str(n.executor))
         if needs_scons:
             # Build all scons generated headers in a single pass.
             build_list = (self.builds
@@ -171,7 +192,7 @@ class NinjaFile(object):
             return
 
         tool = str(n.executor).split(None, 1)[0]
-        if tool not in ('$CC', '$CXX', '$LINK', '$AR'):
+        if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK','$AR'):
             self.builds.append(dict(
                 rule='EXEC',
                 outputs=strmap(targets),
@@ -195,7 +216,7 @@ class NinjaFile(object):
 
 
         libdeps = []
-        if tool == 'LINK':
+        if tool in ('LINK', 'SHLINK'):
             libdeps_objs = myEnv.subst('$_LIBDEPS',executor=n.executor)
             n.executor.get_lvars()['_LIBDEPS'] = libdeps_objs # cache the result.
             libdeps = libdeps_objs.split()
@@ -231,7 +252,7 @@ class NinjaFile(object):
             outputs=strmap(targets),
             inputs=strmap(sources),
             implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
-            order_only='_generated_headers' if tool in ('CC', 'CXX') else None,
+            order_only='_generated_headers' if tool in ('CC', 'CXX', 'SHCC', 'SHCXX') else None,
             variables=myVars,
             ))
 
@@ -287,21 +308,48 @@ class NinjaFile(object):
             pool = 'console',
             description = 'SCONSGEN $out',
             restat=1)
-        ninja.rule('CXX',
-            deps = 'gcc',
-            depfile = '$out.d',
-            command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CXX']),
-            description = 'CXX $out')
-        ninja.rule('CC',
-            deps = 'gcc',
-            depfile = '$out.d',
-            command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CC']),
-            description = 'CC $out')
-        ninja.rule('LINK',
-            command = self.tool_commands['LINK'],
-            description = 'LINK $out')
-        ninja.rule('INSTALL', command = 'install $in $out') # install seems faster than cp.
+
         ninja.rule('EXEC', command='$command')
+
+        if self.globalEnv.TargetOSIs('windows'):
+            ninja.rule('INSTALL', command = 'copy $in $out')
+        else:
+            ninja.rule('INSTALL', command = 'install $in $out') # install seems faster than cp.
+
+        if 'CXX' in self.tool_commands:
+            ninja.rule('CXX',
+                deps = 'gcc',
+                depfile = '$out.d',
+                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CXX']),
+                description = 'CXX $out')
+        if 'SHCXX' in self.tool_commands:
+            ninja.rule('SHCXX',
+                deps = 'gcc',
+                depfile = '$out.d',
+                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCXX']),
+                description = 'SHCXX $out')
+        if 'CC' in self.tool_commands:
+            ninja.rule('CC',
+                deps = 'gcc',
+                depfile = '$out.d',
+                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CC']),
+                description = 'CC $out')
+        if 'SHCC' in self.tool_commands:
+            ninja.rule('SHCC',
+                deps = 'gcc',
+                depfile = '$out.d',
+                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCC']),
+                description = 'SHCC $out')
+        if 'SHLINK' in self.tool_commands:
+            ninja.rule('SHLINK',
+                command = self.tool_commands['SHLINK'],
+                description = 'DYNLIB $out')
+
+
+        if 'LINK' in self.tool_commands:
+            ninja.rule('LINK',
+                command = self.tool_commands['LINK'],
+                description = 'LINK $out')
 
         if 'AR' in self.tool_commands:
             # We need to remove $out because the file existing can confuse ar. This is particularly
