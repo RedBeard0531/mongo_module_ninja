@@ -77,8 +77,4 @@ You can pass `CCFLAGS=-gsplit-dwarf` to try out split dwarf support which makes
 linking much faster. `ccache` already supports it out of the box so they can be
 used together.
 
-## Windows support
-Pull requests are welcome. It shouldn't be too hard. I think most changes will
-need to be in the `NinjaFile.write_rules` method.
-
 <!-- vim: set tw=80 : -->

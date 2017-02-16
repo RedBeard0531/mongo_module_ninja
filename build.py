@@ -64,7 +64,7 @@ class NinjaFile(object):
 
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
-            self.vars['COPY'] = 'copy'
+            self.vars['COPY'] = 'cmd \c copy'
         else:
             self.vars['COPY'] = 'install' # install seems faster than cp.
 
@@ -87,8 +87,8 @@ class NinjaFile(object):
             if not SCons.Node.is_derived_node(n): continue
             if isinstance(n, SCons.Node.FS.Dir): continue
             if str(n.executor).startswith('write_uuid_to_file('): continue
-            if '/sconf_temp/conftest' in str(n): continue
-            if str(n).startswith('build/install/'): continue
+            if os.path.join('','sconf_temp','conftest') in str(n): continue
+            if str(n).startswith(os.path.join('build','install','')): continue
 
             # We see each build task once per target, but we handle all targets the first time.
             if id(n.executor) not in seen:
@@ -129,7 +129,6 @@ class NinjaFile(object):
         sources = n.executor.get_all_sources()
         implicit_deps = strmap(n.depends)
 
-        generating_header = False
         for target in targets:
             if target.always_build:
                 implicit_deps.append('_ALWAYS_BUILD')
@@ -141,7 +140,6 @@ class NinjaFile(object):
             self.built_targets.add(target)
             if target.endswith('.h') or target.endswith('.hpp'):
                 self.generated_headers.add(target)
-                generating_header = True
 
         if action == SCons.Tool.install.install_action:
             assert len(targets) == 1
@@ -190,15 +188,23 @@ class NinjaFile(object):
             return
 
         if isinstance(action, SCons.Action.ListAction):
-            # Remove the noop_action we attach to thin archive builds.
-            if len(action.list) == 2 and str(n.executor).split('\n')[1].startswith('noop_action'):
-                n.executor.set_action_list(action.list[0])
-                assert len(n.executor.get_action_list()) == 1
-                action = n.executor.get_action_list()[0]
+            lines = str(n.executor).split('\n')
+            if len(action.list) == 2:
+                if lines[1] == 'noop_action(target, source, env)':
+                    # Remove the noop_action we attach to thin archive builds.
+                    n.executor.set_action_list(action.list[0])
+                    assert len(n.executor.get_action_list()) == 1
+                    action = n.executor.get_action_list()[0]
+
+                elif lines[1] == 'embedManifestExeCheck(target, source, env)':
+                    # We don't use this.
+                    assert not myEnv.get('WINDOWS_EMBED_MANIFEST')
+                    n.executor.set_action_list(action.list[0])
+                    assert len(n.executor.get_action_list()) == 1
+                    action = n.executor.get_action_list()[0]
 
             # Strip out the functions from shared library builds.
             if '\n$SHLINK' in str(n.executor):
-                lines = str(n.executor).split('\n')
                 assert len(lines) == 3
 
                 # Run the check now. It doesn't need to happen at runtime.
@@ -215,6 +221,20 @@ class NinjaFile(object):
                 n.executor.set_action_list(action.list[1])
                 assert len(n.executor.get_action_list()) == 1
                 action = n.executor.get_action_list()[0]
+
+
+        if str(n.executor).startswith('${TEMPFILE("'):
+            # Capture the real action under the tempfile.
+            cmd = []
+            def TEMPFILE(cmd_, comstr=None):
+                cmd.append(cmd_)
+            myEnv['TEMPFILE'] = TEMPFILE
+            myEnv.subst(str(n.executor), executor=n.executor)
+            cmd = cmd[0]
+            assert '(' not in cmd
+            n.executor.set_action_list([Action(cmd)])
+            assert len(n.executor.get_action_list()) == 1
+            action = n.executor.get_action_list()[0]
 
 
         # TODO find a better way to find things that are functions
@@ -246,8 +266,14 @@ class NinjaFile(object):
         self.tool_paths.add(myEnv.WhereIs(tool))
 
         tool = tool.strip('${}')
-        cmd = self.make_command(str(n.executor).replace('$TARGET', '$out')
-                                               .replace('$SOURCES', '$in'))
+        # This is only designed for tools that use $TARGET and $SOURCES not $TARGETS or $SOURCE.
+        cmd = self.make_command(str(n.executor).replace('$TARGET.windows', '$out')
+                                               .replace('$TARGET','$out')
+                                               .replace('$CHANGED_SOURCES', '$in')
+                                               .replace('$SOURCES.windows', '$in')
+                                               .replace('$SOURCES','$in'))
+        assert 'TARGET' not in cmd
+        assert 'SOURCE' not in cmd
         if tool in self.tool_commands:
             assert cmd == self.tool_commands[tool]
         else:
@@ -261,6 +287,7 @@ class NinjaFile(object):
             libdeps = libdeps_objs.split()
 
         myVars = {}
+
         for word in shlex.split(cmd):
             if not word.startswith('$'): continue
             if word in ('$in', '$out'): continue
@@ -272,8 +299,9 @@ class NinjaFile(object):
             assert re.match(r'^[a-zA-Z_]*$', name)
 
             mySubst = myEnv.subst(word, executor=n.executor)
-            if name == '_LIBFLAGS':
-                # never worth commoning since it includes libdeps.
+
+            if name in ('_LIBFLAGS', '_PDB', '_MSVC_OUTPUT_FLAG'):
+                # These are never worth commoning since they are always different.
                 myVars[name] = mySubst
                 continue
 
@@ -286,9 +314,12 @@ class NinjaFile(object):
                 num = over.setdefault(mySubst, len(over))
                 myVars[name] = '$%s_%s'%(name, num)
 
+        # Since the scons command line uses '$TARGET' it only expects the first target to be passed.
+        # Everything else must be an implicit output
         self.builds.append(dict(
             rule=tool,
-            outputs=strmap(targets),
+            outputs=str(targets[0]),
+            implicit_outputs=strmap(targets[1:]),
             inputs=strmap(sources),
             implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
             order_only='_generated_headers' if tool in ('CC', 'CXX', 'SHCC', 'SHCXX') else None,
@@ -342,10 +373,6 @@ class NinjaFile(object):
     def write_rules(self, ninja):
         ninja.newline()
 
-        # ninja ignores leading spaces so this will work fine if empty.
-        ccache = self.globalEnv['_NINJA_CCACHE']
-
-
         ninja.rule('EXEC', command='$command')
         ninja.rule('INSTALL',
                 command = '$COPY $in $out',
@@ -363,47 +390,68 @@ class NinjaFile(object):
             description = 'SCONSGEN $out',
             restat=1)
 
-        if 'CXX' in self.tool_commands:
-            ninja.rule('CXX',
-                deps = 'gcc',
-                depfile = '$out.d',
-                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CXX']),
-                description = 'CXX $out')
-        if 'SHCXX' in self.tool_commands:
-            ninja.rule('SHCXX',
-                deps = 'gcc',
-                depfile = '$out.d',
-                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCXX']),
-                description = 'SHCXX $out')
-        if 'CC' in self.tool_commands:
-            ninja.rule('CC',
-                deps = 'gcc',
-                depfile = '$out.d',
-                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CC']),
-                description = 'CC $out')
-        if 'SHCC' in self.tool_commands:
-            ninja.rule('SHCC',
-                deps = 'gcc',
-                depfile = '$out.d',
-                command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCC']),
-                description = 'SHCC $out')
-        if 'SHLINK' in self.tool_commands:
-            ninja.rule('SHLINK',
-                command = self.tool_commands['SHLINK'],
-                description = 'DYNLIB $out')
+        if self.globalEnv.ToolchainIs('gcc', 'clang'):
+            # ninja ignores leading spaces so this will work fine if empty.
+            ccache = self.globalEnv.get('_NINJA_CCACHE', '')
+            if 'CXX' in self.tool_commands:
+                ninja.rule('CXX',
+                    deps = 'gcc',
+                    depfile = '$out.d',
+                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CXX']),
+                    description = 'CXX $out')
+            if 'SHCXX' in self.tool_commands:
+                ninja.rule('SHCXX',
+                    deps = 'gcc',
+                    depfile = '$out.d',
+                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCXX']),
+                    description = 'SHCXX $out')
+            if 'CC' in self.tool_commands:
+                ninja.rule('CC',
+                    deps = 'gcc',
+                    depfile = '$out.d',
+                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CC']),
+                    description = 'CC $out')
+            if 'SHCC' in self.tool_commands:
+                ninja.rule('SHCC',
+                    deps = 'gcc',
+                    depfile = '$out.d',
+                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCC']),
+                    description = 'SHCC $out')
+            if 'SHLINK' in self.tool_commands:
+                ninja.rule('SHLINK',
+                    command = self.tool_commands['SHLINK'],
+                    description = 'DYNLIB $out')
+            if 'LINK' in self.tool_commands:
+                ninja.rule('LINK',
+                    command = self.tool_commands['LINK'],
+                    description = 'LINK $out')
+            if 'AR' in self.tool_commands:
+                # We need to remove $out because the file existing can confuse ar. This is particularly
+                # a problem when switching between thin and non-thin archive files.
+                ninja.rule('AR',
+                    command = 'rm -f $out && ' + self.tool_commands['AR'],
+                    description = 'STATICLIB $out')
+        else:
+            for tool in self.tool_commands:
+                assert not tool.startswith('SH')
 
+            if 'CXX' in self.tool_commands:
+                ninja.rule('CXX',
+                    deps = 'msvc',
+                    command = '%s /showIncludes'%(self.tool_commands['CXX']),
+                    description = 'CXX $out')
+            if 'CC' in self.tool_commands:
+                ninja.rule('CC',
+                    deps = 'msvc',
+                    command = '%s /showIncludes'%(self.tool_commands['CC']),
+                    description = 'CC $out')
+            if 'LINK' in self.tool_commands:
+                ninja.rule('LINK',
+                    command = '$LINK @$out.rsp',
+                    rspfile = '$out.rsp',
+                    rspfile_content = self.tool_commands['LINK'].replace('$LINK ', ''),
+                    description = 'LINK $out')
 
-        if 'LINK' in self.tool_commands:
-            ninja.rule('LINK',
-                command = self.tool_commands['LINK'],
-                description = 'LINK $out')
-
-        if 'AR' in self.tool_commands:
-            # We need to remove $out because the file existing can confuse ar. This is particularly
-            # a problem when switching between thin and non-thin archive files.
-            ninja.rule('AR',
-                command = 'rm -f $out && ' + self.tool_commands['AR'],
-                description = 'STATICLIB $out')
 
     def write_builds(self, ninja):
         ninja.newline()
@@ -422,13 +470,16 @@ class NinjaFile(object):
 
     def write_regenerator(self, ninja):
         scons_dependencies = sorted(set(SCons.Util.flatten([
-            rglob('SCons*'),
+            'SConstruct',
+            rglob('SConscript'),
             rglob('*.py', 'site_scons'),
             rglob('*.py', 'buildscripts'),
             rglob('*.py', 'src/third_party/scons-2.5.0'),
             rglob('*.py', 'src/mongo/db/modules'),
             [self.globalEnv.WhereIs(tool) for tool in self.tool_paths],
             ])))
+        if None in scons_dependencies:
+            scons_dependencies.remove(None)
 
         ninja.newline()
         ninja.rule('GENERATOR',
@@ -437,8 +488,7 @@ class NinjaFile(object):
             generator = 1,
             description = 'Regenerating $out',
             restat=1)
-        ninja.build(self.ninja_file, 'GENERATOR',
-                implicit=['buildscripts/scons.py'] + scons_dependencies)
+        ninja.build(self.ninja_file, 'GENERATOR', implicit=scons_dependencies)
 
 def configure(conf, env):
     if not COMMAND_LINE_TARGETS:
