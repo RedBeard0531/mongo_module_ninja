@@ -222,6 +222,13 @@ class NinjaFile(object):
                 assert len(n.executor.get_action_list()) == 1
                 action = n.executor.get_action_list()[0]
 
+        if str(n.executor) == 'jsToH(target, source, env)':
+            # Patch over the function to do it outside of scons.
+            cmd = '$PYTHON site_scons/site_tools/jstoh.py $TARGET $SOURCES'
+            implicit_deps.append('site_scons/site_tools/jstoh.py')
+            n.executor.set_action_list([Action(cmd)])
+            assert len(n.executor.get_action_list()) == 1
+            action = n.executor.get_action_list()[0]
 
         if str(n.executor).startswith('${TEMPFILE("'):
             # Capture the real action under the tempfile.
