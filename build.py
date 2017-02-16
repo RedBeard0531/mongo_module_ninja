@@ -8,6 +8,7 @@ import glob
 import json
 import shlex
 import fnmatch
+import subprocess
 
 try:
     import ninja_syntax
@@ -517,8 +518,8 @@ def configure(conf, env):
         print '***'
 
     if GetOption('cache'):
-        print "Remove --cache flags to make ninja generation work."
-        print "ccache is used automatically if it is installed."
+        print "*** Remove --cache flags to make ninja generation work."
+        print "*** ccache is used automatically if it is installed."
         Exit(1)
 
     action_str = "Generating $TARGET"
@@ -537,6 +538,14 @@ def configure(conf, env):
                 # Needed to make clang++ play nicely with ccache. Ideally this would use
                 # AddToCCFLAGSIfSupported but that is available to modules.
                 env.Append(CCFLAGS=["-Qunused-arguments"])
+
+            if any('-gsplit-dwarf' in env[var] for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS')):
+                version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
+                                     .split('\n', 1)[0]
+                                     .split()[-1])
+                if map(int, version.split('.')) < [3, 2, 3]:
+                    print "*** -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
+                    Exit(1)
 
             if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
                 print "*** WARNING: to get the most out of ccache, pass these flags to scons:"

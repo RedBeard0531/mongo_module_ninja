@@ -14,15 +14,25 @@ cd src/mongo/db/modules
 git clone https://github.com/RedBeard0531/mongo_module_ninja ninja
 cd -
 
-scons --modules=ninja CC=clang CXX=clang++ --link-model=static build.ninja
+# On non-linux, remove --link-model=static.
+# Also, read the section about split DWARF below.
+scons --link-model=static CC=clang CXX=clang++ \
+    CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
+    MONGO_VERSION='0.0.0' MONGO_GIT_HASH='unknown' \
+    VARIANT_DIR=ninja --modules=ninja \
+    build.ninja
 
 export NINJA_STATUS='[%f/%t (%p) %es] ' # make the ninja output even nicer
+
 ninja mongod # builds mongod
 ninja # builds the defualt target (still mongod)
-ninja core # also supports aliases
-ninja build/unittests.txt # calls back into scons automatically for some files
+ninja core # supports all scons aliases except lint and distsrc
 ninja build/unittests/TAB # autocompletion should work
 ```
+
+This requires ninja >= 1.7. You can download it from
+[here](https://github.com/ninja-build/ninja/releases)
+if if isn't in your distribution.
 
 If you want to change your build flags, just run the `scons` command with the
 new flags to have it regenerate the build.ninja file. `ninja` will
@@ -32,7 +42,7 @@ change so you don't shouldn't need to manually rerun scons often.
 ## ccache support
 
 If you have `ccache` installed and on your path, it will be used automatically.
-If you have it installed but don't want to use it pass `--no-cache` to scons.
+If you have it installed but don't want to use it, pass `--no-cache` to scons.
 
 You can tell if it is being used by the message printed by scons:
 
@@ -74,7 +84,18 @@ ninja -f gcc.ninja mongod # builds mongod with gcc
 **☠️ WARNING: This is even more experimental than everything else! ☠️**
 
 You can pass `CCFLAGS=-gsplit-dwarf` to try out split dwarf support which makes
-linking much faster. `ccache` already supports it out of the box so they can be
-used together.
+linking much faster. `ccache` >= 3.2.3 supports it out of the box so they can be
+used together. `scons` will error if you use -gsplit-dwarf on an older ccache.
+
+On macOS this requires Xcode >= 8. On linux this requires all supported compiler
+versions work. `scons` will not error if you don't have a new enough compiler,
+but you can check for yourself by running `find build/ -name *.dwo` after
+compiling and seeing if there are any files.
+
+Additionally, in order to actually *use* the dwarf info, your debugging tools
+will need to support it. I've tested the latest gdb, perf, addr2line, and
+llvm-symbolizer (used by `mongosymb.py`) on linux and they all work. I don't know
+about other platforms or older versions. If your tool of choice doesn't work,
+upgrade or remove `-gsplit-dwarf` and recompile.
 
 <!-- vim: set tw=80 : -->
