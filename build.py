@@ -10,15 +10,17 @@ import shlex
 import fnmatch
 import subprocess
 
+my_dir = os.path.dirname(__file__)
+
 try:
     import ninja_syntax
 except ImportError:
     # Sometimes we can't import a sibling file. This makes it possible.
-    sys.path.append(os.path.dirname(__file__))
+    sys.path.append(my_dir)
     import ninja_syntax
 
-subst_file_script = os.path.join(os.path.dirname(__file__), 'subst_file.py')
-test_list_script = os.path.join(os.path.dirname(__file__), 'test_list.py')
+subst_file_script = os.path.join(my_dir, 'subst_file.py')
+test_list_script = os.path.join(my_dir, 'test_list.py')
 
 def makeNinjaFile(target, source, env):
     assert not source
@@ -510,6 +512,19 @@ def configure(conf, env):
     ninja_files = [str(t) for t in BUILD_TARGETS if str(t).endswith('.ninja')]
     if not ninja_files:
         return
+
+    try:
+        print "Checking for updates to ninja module..."
+        subprocess.check_call(['git', '-C', my_dir, 'fetch'])
+        output = subprocess.check_output(['git', '-C', my_dir, 'log', '--oneline', '@..origin'])
+        if output:
+            print "***"
+            print "*** Your ninja module is out of date. New commits:"
+            print "***"
+            print output
+    except Exception, e:
+        # Errors checking for updates shouldn't prevent building.
+        print "Ignoring error checking for updates: ", e
 
     if 'ninja' not in env.subst("$VARIANT_DIR"):
         print "*** WARNING: you should use a dedicated VARIANT_DIR for ninja builds to prevent"
