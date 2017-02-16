@@ -62,8 +62,8 @@ class NinjaFile(object):
         self.built_targets = set()
         self.generated_headers = set()
 
-        self.find_aliases()
         self.find_build_nodes()
+        self.find_aliases()
 
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
@@ -76,6 +76,10 @@ class NinjaFile(object):
 
     def find_aliases(self):
         for alias in SCons.Node.Alias.default_ans.values():
+            if str(alias) in self.built_targets:
+                # For some reason we sometimes define a task then alias it to itself.
+                continue
+
             if alias.get_builder() == SCons.Environment.AliasBuilder:
                 # "pure" aliases
                 self.aliases[str(alias)] = [str(s) for s in alias.sources]
@@ -83,6 +87,13 @@ class NinjaFile(object):
             else:
                 # Ignore these for now
                 assert (str(alias) in ('dist', 'lint'))
+
+        # Fix integration_tests alias to point to files rather than directories.
+        # TODO remove after CR merged
+        integration_tests_dir = os.path.join('build', 'integration_tests')
+        if integration_tests_dir in self.aliases['integration_tests']:
+            self.aliases['integration_tests']= [t for t in self.built_targets
+                                                  if t.startswith(integration_tests_dir)]
 
     def find_build_nodes(self):
         seen = set()
@@ -175,6 +186,7 @@ class NinjaFile(object):
                 tests = sources[0].value
             else:
                 # Unpatched builds put the list in sources.
+                #TODO remove after CR merged
                 tests = strmap(sources)
 
             implicit_deps.extend([test_list_script, self.ninja_file])
@@ -227,6 +239,7 @@ class NinjaFile(object):
 
         if str(n.executor) == 'jsToH(target, source, env)':
             # Patch over the function to do it outside of scons.
+            #TODO remove after CR merged
             cmd = '$PYTHON site_scons/site_tools/jstoh.py $TARGET $SOURCES'
             implicit_deps.append('site_scons/site_tools/jstoh.py')
             n.executor.set_action_list([Action(cmd)])
@@ -470,9 +483,7 @@ class NinjaFile(object):
 
         ninja.newline()
         for alias in sorted(self.aliases):
-            if alias not in self.built_targets:
-                # For some reason we sometimes define a task then alias it to itself.
-                ninja.build(alias, 'phony', strmap(self.aliases[alias]))
+            ninja.build(alias, 'phony', strmap(self.aliases[alias]))
 
         ninja.newline()
         ninja.build('_generated_headers', 'phony', sorted(self.generated_headers))
