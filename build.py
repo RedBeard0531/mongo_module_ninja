@@ -479,17 +479,28 @@ class NinjaFile(object):
         ninja.build('_ALWAYS_BUILD', 'phony')
 
     def write_regenerator(self, ninja):
-        scons_dependencies = sorted(set(SCons.Util.flatten([
+        deps = SCons.Util.flatten([
             'SConstruct',
-            rglob('SConscript'),
+            rglob('SConscript', 'src'),
             rglob('*.py', 'site_scons'),
             rglob('*.py', 'buildscripts'),
             rglob('*.py', 'src/third_party/scons-2.5.0'),
             rglob('*.py', 'src/mongo/db/modules'),
             [self.globalEnv.WhereIs(tool) for tool in self.tool_paths],
-            ])))
-        if None in scons_dependencies:
-            scons_dependencies.remove(None)
+
+            # Depend on git as position as well. This ensures that error codes are always checked
+            # after rebase.
+            '.git/HEAD',
+            glob.glob('.git/refs/heads/*'),
+            ])
+        deps = sorted(set(dep.replace(' ', '\\ ')
+                          for dep in deps
+                          if dep and os.path.isfile(dep)))
+
+        depfile = self.ninja_file + '.deps'
+        with file(depfile, 'w') as f:
+            f.write(self.ninja_file + ': ')
+            f.write(' '.join(deps))
 
         ninja.newline()
         ninja.rule('GENERATOR',
@@ -497,8 +508,9 @@ class NinjaFile(object):
             pool = 'console',
             generator = 1,
             description = 'Regenerating $out',
+            depfile = depfile,
             restat=1)
-        ninja.build(self.ninja_file, 'GENERATOR', implicit=scons_dependencies)
+        ninja.build(self.ninja_file, 'GENERATOR')
 
 def configure(conf, env):
     if not COMMAND_LINE_TARGETS:
