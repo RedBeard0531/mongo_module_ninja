@@ -19,6 +19,7 @@ except ImportError:
     sys.path.append(my_dir)
     import ninja_syntax
 
+split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
 
@@ -305,13 +306,15 @@ class NinjaFile(object):
 
         libdeps = []
         if tool in ('LINK', 'SHLINK'):
-            libdeps_objs = myEnv.subst('$_LIBDEPS',executor=n.executor)
-            n.executor.get_lvars()['_LIBDEPS'] = libdeps_objs # cache the result.
-            libdeps = libdeps_objs.split()
+            libdeps = myEnv.subst('$_LIBDEPS',executor=n.executor)
+            n.executor.get_lvars()['_LIBDEPS'] = libdeps # cache the result.
+            libdeps = libdeps.split()
+            if myEnv.ToolchainIs('msvc'):
+                implicit_deps += [split_lines_script]
 
         myVars = {}
 
-        for word in shlex.split(cmd):
+        for word in shlex.split(cmd, posix=myEnv.TargetOSIs('posix')):
             if not word.startswith('$'): continue
             if word in ('$in', '$out'): continue
 
@@ -472,7 +475,7 @@ class NinjaFile(object):
                     description = 'CC $out')
             if 'LINK' in self.tool_commands:
                 ninja.rule('LINK',
-                    command = '$LINK @$out.rsp',
+                    command = 'cmd /c $PYTHON %s $out.rsp && $LINK @$out.rsp'%split_lines_script,
                     rspfile = '$out.rsp',
                     rspfile_content = self.tool_commands['LINK'].replace('$LINK ', ''),
                     description = 'LINK $out')
