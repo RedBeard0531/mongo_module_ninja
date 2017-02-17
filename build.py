@@ -356,6 +356,8 @@ class NinjaFile(object):
         # make ninja file directly executable. (bit set later)
         # can't use ninja.comment() because it adds a space after the !
         ninja_exe = where_is(self.globalEnv, 'ninja')
+        if not ninja_exe:
+            ninja_exe = where_is(self.globalEnv, 'ninja-build') # Fedora...
         if ninja_exe:
             file.write('#!%s -f\n\n'%ninja_exe)
 

@@ -30,14 +30,17 @@ ninja core # supports all scons aliases except lint and distsrc
 ninja build/unittests/TAB # autocompletion should work
 ```
 
-This requires ninja >= 1.7. You can download it from
-[here](https://github.com/ninja-build/ninja/releases)
-if if isn't in your distribution.
-
 If you want to change your build flags, just run the `scons` command with the
 new flags to have it regenerate the build.ninja file. `ninja` will
 automatically regenerate the build.ninja file whenever any of the SCons files
 change so you don't shouldn't need to manually rerun scons often.
+
+This requires ninja >= 1.7. You can download it from
+[here](https://github.com/ninja-build/ninja/releases)
+if if isn't in your distribution. Note that Fedora calls both the binary and the
+package `ninja-build`. Ubuntu calls the package `ninja-build` but leaves the
+binary named `ninja`. Ubuntu <= yakkety (16.10) uses an old version of ninja so
+you will need to download the binary if you aren't running that release.
 
 ## ccache support
 
