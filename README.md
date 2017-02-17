@@ -16,7 +16,7 @@ cd -
 
 # On non-linux, remove --link-model=static.
 # Also, read the section about split DWARF below.
-scons --link-model=static CC=clang CXX=clang++ \
+python buildscripts/scons.py --link-model=static CC=clang CXX=clang++ \
     CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
     MONGO_VERSION='0.0.0' MONGO_GIT_HASH='unknown' \
     VARIANT_DIR=ninja --modules=ninja \
@@ -35,12 +35,24 @@ new flags to have it regenerate the build.ninja file. `ninja` will
 automatically regenerate the build.ninja file whenever any of the SCons files
 change so you don't shouldn't need to manually rerun scons often.
 
-This requires ninja >= 1.7. You can download it from
+This module requires ninja >= 1.7. You can download it from
 [here](https://github.com/ninja-build/ninja/releases)
 if if isn't in your distribution. Note that Fedora calls both the binary and the
 package `ninja-build`. Ubuntu calls the package `ninja-build` but leaves the
 binary named `ninja`. Ubuntu <= yakkety (16.10) uses an old version of ninja so
 you will need to download the binary if you aren't running that release.
+
+## Troubleshooting
+
+1. Email or slack me (Mathias) if you run in to any problems.
+1. If you get an error about `is_derived_node` you are using an old version of
+   scons. Try using `python buildscripts/scons.py` rather than just `scons`.
+1. If you get an error about `Unknown variables specified:` try removing all of
+   the `\`s from your command line.
+1. If scons is prompting for your password, try checking out this module with
+   the `https://` url used above rather than a `git@github.com` url.
+1. If any of your debugging tools behave oddly, read the section about split
+   DWARF info below and consider removing `-gsplit-dwarf` from your CCFLAGS.
 
 ## ccache support
 
