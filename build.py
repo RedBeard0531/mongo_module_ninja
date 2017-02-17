@@ -260,6 +260,18 @@ class NinjaFile(object):
             assert len(n.executor.get_action_list()) == 1
             action = n.executor.get_action_list()[0]
 
+        if str(n.executor).endswith('${TEMPFILE(SOURCES[1:])}'):
+            assert len(targets) == 1
+            prefix = str(n.executor)[:-len('${TEMPFILE(SOURCES[1:])}')]
+            cmd = myEnv.subst(prefix, executor=n.executor) + (' @%s.rsp'%targets[0])
+            self.builds.append(dict(
+                rule='EXEC_RSP',
+                outputs=strmap(targets),
+                inputs=strmap(sources[1:]),
+                implicit=implicit_deps + [str(sources[0])],
+                variables = {'command': cmd},
+                ))
+            return
 
         # TODO find a better way to find things that are functions
         needs_scons = (isinstance(n.executor.get_action_list()[0], SCons.Action.FunctionAction)
@@ -402,6 +414,12 @@ class NinjaFile(object):
         ninja.newline()
 
         ninja.rule('EXEC', command='$command')
+        ninja.rule('EXEC_RSP',
+                command='$command',
+                rspfile = '$out.rsp',
+                rspfile_content = '$in',
+                )
+
         ninja.rule('INSTALL',
                 command = '$COPY $in $out',
                 description = 'INSTALL $out')
