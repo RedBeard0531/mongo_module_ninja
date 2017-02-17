@@ -25,7 +25,7 @@ scons --link-model=static CC=clang CXX=clang++ \
 export NINJA_STATUS='[%f/%t (%p) %es] ' # make the ninja output even nicer
 
 ninja mongod # builds mongod
-ninja # builds the defualt target (still mongod)
+ninja # builds the default target (still mongod)
 ninja core # supports all scons aliases except lint and distsrc
 ninja build/unittests/TAB # autocompletion should work
 ```
