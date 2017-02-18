@@ -42,6 +42,15 @@ package `ninja-build`. Ubuntu calls the package `ninja-build` but leaves the
 binary named `ninja`. Ubuntu <= yakkety (16.10) uses an old version of ninja so
 you will need to download the binary if you aren't running that release.
 
+## New scons options
+
+This module adds the following options to scons. Unfortunately, they won't show
+up with `--help` so they are documented here.
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--link-pool-depth=NNN` | 4 | **WINDOWS ONLY**: limit the number of concurrent link tasks |
+
 ## Troubleshooting
 
 1. Email or slack me (Mathias) if you run in to any problems.
