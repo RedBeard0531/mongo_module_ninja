@@ -68,7 +68,7 @@ class NinjaFile(object):
 
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
-            self.vars['COPY'] = 'cmd \c copy'
+            self.vars['COPY'] = 'cmd /c copy'
         else:
             self.vars['COPY'] = 'install' # install seems faster than cp.
 
