@@ -62,6 +62,7 @@ class NinjaFile(object):
         self.builds = []
         self.built_targets = set()
         self.generated_headers = set()
+        self.rc_files = []
 
         self.find_build_nodes()
         self.find_aliases()
@@ -287,7 +288,7 @@ class NinjaFile(object):
             return
 
         tool = str(n.executor).split(None, 1)[0]
-        if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK','$AR'):
+        if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
             self.builds.append(dict(
                 rule='EXEC',
                 outputs=strmap(targets),
@@ -323,6 +324,13 @@ class NinjaFile(object):
             libdeps = libdeps.split()
             if myEnv.ToolchainIs('msvc'):
                 implicit_deps += [split_lines_script]
+
+        if tool == 'RC':
+            # We need to use the scons scanner for windows rc files since the rc tool doesn't have
+            # anything like /showIncludes.
+            n.scan()
+            implicit_deps += strmap(n.implicit)
+            self.rc_files.append(str(sources[0])) # Regenerate build.ninja when this file changes.
 
         myVars = {}
 
@@ -360,7 +368,9 @@ class NinjaFile(object):
             implicit_outputs=strmap(targets[1:]),
             inputs=strmap(sources),
             implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
-            order_only='_generated_headers' if tool in ('CC', 'CXX', 'SHCC', 'SHCXX') else None,
+            order_only='_generated_headers'
+                       if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
+                       else None,
             variables=myVars,
             ))
 
@@ -491,6 +501,10 @@ class NinjaFile(object):
                     deps = 'msvc',
                     command = '%s /showIncludes'%(self.tool_commands['CC']),
                     description = 'CC $out')
+            if 'RC' in self.tool_commands:
+                ninja.rule('RC',
+                    command = self.tool_commands['RC'],
+                    description = 'RC $out')
             if 'LINK' in self.tool_commands:
                 ninja.rule('LINK',
                     command = 'cmd /c $PYTHON %s $out.rsp && $LINK @$out.rsp'%split_lines_script,
@@ -521,6 +535,7 @@ class NinjaFile(object):
             rglob('*.py', 'src/third_party/scons-2.5.0'),
             rglob('*.py', 'src/mongo/db/modules'),
             [self.globalEnv.WhereIs(tool) for tool in self.tool_paths],
+            self.rc_files, # We rely on scons to tell us the deps of windows rc files.
 
             # Depend on git as position as well. This ensures that error codes are always checked
             # after rebase.
