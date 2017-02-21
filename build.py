@@ -600,6 +600,20 @@ def configure(conf, env):
                 # AddToCCFLAGSIfSupported but that is available to modules.
                 env.Append(CCFLAGS=["-Qunused-arguments"])
 
+            settings = subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
+            if 'max_size = 5.0G' in settings:
+                print '*** ccache is using the default 5GB cache size. You can raise it by running:'
+                print '*** ccache -o max_size=20G'
+                print '***'
+
+            if 'run_second_cpp = false' in settings:
+                # This defaults to true in new versions. Our codebase generates spurious warnings
+                # when it is false because the compiler can't see what is part of a macro expansion.
+                print '*** Change the ccache run_second_cpp flag to true by running:'
+                print '*** ccache -o run_second_cpp=true'
+                print '***'
+                Exit(1)
+
             if any('-gsplit-dwarf' in env[var] for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS')):
                 version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
                                      .split('\n', 1)[0]
