@@ -612,6 +612,13 @@ def configure(conf, env):
         # ninja filter out the colors if the real stdout is redirected.
         env.Append(CCFLAGS=["-fdiagnostics-color=always"])
 
+        using_gsplitdwarf = any('-gsplit-dwarf' in env[var]
+                                for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS'))
+
+        if using_gsplitdwarf and not env.TargetOSIs('linux'):
+            print "*** -gsplit-dwarf is only supported on Linux."
+            Exit(1)
+
         if GetOption('cache_disable'):
             env['_NINJA_CCACHE'] = ''
         else:
@@ -637,7 +644,7 @@ def configure(conf, env):
                 print '***'
                 Exit(1)
 
-            if any('-gsplit-dwarf' in env[var] for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS')):
+            if using_gsplitdwarf:
                 version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
                                      .split('\n', 1)[0]
                                      .split()[-1])

@@ -14,7 +14,7 @@ cd src/mongo/db/modules
 git clone https://github.com/RedBeard0531/mongo_module_ninja ninja
 cd -
 
-# On non-linux, remove --link-model=static.
+# On non-linux, remove --link-model=static and -gsplit-dwarf.
 # Also, read the section about split DWARF below.
 python buildscripts/scons.py --link-model=static CC=clang CXX=clang++ \
     CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
@@ -107,19 +107,15 @@ ninja -f gcc.ninja mongod # builds mongod with gcc
 
 **☠️ WARNING: This is even more experimental than everything else! ☠️**
 
-You can pass `CCFLAGS=-gsplit-dwarf` to try out split dwarf support which makes
-linking much faster. `ccache` >= 3.2.3 supports it out of the box so they can be
-used together. `scons` will error if you use -gsplit-dwarf on an older ccache.
+On linux, you can pass `CCFLAGS=-gsplit-dwarf` to try out split dwarf support
+which makes linking much faster. `ccache` >= 3.2.3 supports it out of the box so
+they can be used together. `scons` will error if you use -gsplit-dwarf with an
+older ccache or an unsupported platform.
 
-On macOS this requires Xcode >= 8. On linux this requires all supported compiler
-versions work. `scons` will not error if you don't have a new enough compiler,
-but you can check for yourself by running `find build/ -name *.dwo` after
-compiling and seeing if there are any files.
-
-Additionally, in order to actually *use* the dwarf info, your debugging tools
-will need to support it. I've tested the latest gdb, perf, addr2line, and
-llvm-symbolizer (used by `mongosymb.py`) on linux and they all work. I don't know
-about other platforms or older versions. If your tool of choice doesn't work,
-upgrade or remove `-gsplit-dwarf` and recompile.
+In order to actually *use* the dwarf info, your debugging tools will need to
+support it. I've tested the latest gdb, perf, addr2line, and llvm-symbolizer
+(used by `mongosymb.py`) on linux and they all work. I don't know about older
+versions or other tools. If your tool of choice doesn't work, upgrade or remove
+`-gsplit-dwarf` and recompile.
 
 <!-- vim: set tw=80 : -->
