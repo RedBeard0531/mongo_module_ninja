@@ -62,6 +62,10 @@ up with `--help` so they are documented here.
    the `https://` url used above rather than a `git@github.com` url.
 1. If any of your debugging tools behave oddly, read the section about split
    DWARF info below and consider removing `-gsplit-dwarf` from your CCFLAGS.
+1. If ccache doesn't seem to be working, run `CCACHE_LOGFILE=/tmp/ccache.log
+   ninja -j1`, let it compile a few objects, then look at
+   `/tmp/ccache.log`. It should tell you why it isn't able to use the cache. If
+   that doesn't help, see step 1.
 
 ## ccache support
 
