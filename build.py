@@ -323,12 +323,11 @@ class NinjaFile(object):
         else:
             self.tool_commands[tool] = cmd
 
-
         libdeps = []
         if tool in ('LINK', 'SHLINK'):
-            libdeps = myEnv.subst('$_LIBDEPS',executor=n.executor)
-            n.executor.get_lvars()['_LIBDEPS'] = libdeps # cache the result.
-            libdeps = libdeps.split()
+            libdep_func = myEnv[myEnv['_LIBDEPS'].strip('${}')]
+            assert callable(libdep_func)
+            libdeps = strmap(libdep_func(sources, targets, myEnv, False))
             if myEnv.ToolchainIs('msvc'):
                 implicit_deps += [split_lines_script]
 
