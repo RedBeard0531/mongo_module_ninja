@@ -14,7 +14,10 @@ import subprocess
 import multiprocessing
 from buildscripts import errorcodes
 
-my_dir = os.path.dirname(__file__)
+def ospath(file):
+    return file.replace('/',os.path.sep)
+
+my_dir = ospath(os.path.dirname(__file__))
 
 try:
     import ninja_syntax
@@ -31,7 +34,6 @@ AddOption('--link-pool-depth',
         action='store',
         dest='link-pool-depth',
         help='WINDOWS ONLY: limit of concurrent links (default 4)')
-
 AddOption('--ninja-builddir',
         type='str',
         action='store',
@@ -45,13 +47,16 @@ AddOption('--icecream',
         dest='icecream',
         help='Use the icecream distributed compile server')
 
-split_lines_script = os.path.join(my_dir, 'split_lines.py')
-subst_file_script = os.path.join(my_dir, 'subst_file.py')
-test_list_script = os.path.join(my_dir, 'test_list.py')
-touch_compiler_timestamps_script = os.path.join(my_dir, 'touch_compiler_timestamps.py')
+def sibling(*file):
+    return os.path.join(my_dir, *file)
 
-icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
-icecc_gcc_wrapper = os.path.abspath(os.path.join(my_dir, 'icecream', 'icecc-gcc-wrapper'))
+split_lines_script = sibling('split_lines.py')
+subst_file_script = sibling('subst_file.py')
+test_list_script = sibling('test_list.py')
+touch_compiler_timestamps_script = sibling('touch_compiler_timestamps.py')
+
+icecc_create_env = sibling('icecream', 'icecc-create-env')
+icecc_gcc_wrapper = os.path.abspath(sibling('icecream', 'icecc-gcc-wrapper'))
 
 def makeNinjaFile(target, source, env):
     assert not source
@@ -110,14 +115,20 @@ class NinjaFile(object):
         if env.get('_NINJA_ICECC'):
             self.set_up_icecc()
 
-        assert 'COPY' not in self.vars
-        if self.globalEnv.TargetOSIs('windows'):
-            self.vars['COPY'] = 'cmd /c copy'
-        else:
-            self.vars['COPY'] = 'install' # install seems faster than cp.
+        if True: # TODO pch flag guard
+            self.enable_pch()
 
-        assert 'PYTHON' not in self.vars
-        self.vars['PYTHON'] = self.globalEnv.WhereIs('$PYTHON')
+        def set_var(var, val):
+            assert var not in self.vars
+            self.vars[var] = val
+
+        set_var('PYTHON', self.globalEnv.WhereIs('$PYTHON'))
+        set_var('CCACHE', self.globalEnv.get('_NINJA_CCACHE', ''))
+
+        if self.globalEnv.TargetOSIs('windows'):
+            set_var('COPY', 'cmd /c copy')
+        else:
+            set_var('COPY', 'install') # install seems faster than cp.
 
     def add_run_test_builds(self):
         # For everything that gets installed to build/unittests, add a rule for +basename
@@ -269,7 +280,7 @@ class NinjaFile(object):
 
         # Fix integration_tests alias to point to files rather than directories.
         # TODO remove after CR merged
-        integration_tests_dir = os.path.join('build', 'integration_tests')
+        integration_tests_dir = ospath('build/integration_tests')
         if integration_tests_dir in self.aliases['integration_tests']:
             self.aliases['integration_tests']= [t for t in self.built_targets
                                                   if t.startswith(integration_tests_dir)]
@@ -280,8 +291,8 @@ class NinjaFile(object):
             if not SCons.Node.is_derived_node(n): continue
             if isinstance(n, SCons.Node.FS.Dir): continue
             if str(n.executor).startswith('write_uuid_to_file('): continue
-            if os.path.join('','sconf_temp','conftest') in str(n): continue
-            if str(n).startswith(os.path.join('build','install','')): continue
+            if ospath('/sconf_temp/conftest') in str(n): continue
+            if str(n).startswith(ospath('build/install/')): continue
 
             # We see each build task once per target, but we handle all targets the first time.
             if id(n.executor) not in seen:
@@ -595,6 +606,83 @@ class NinjaFile(object):
             variables=myVars,
             ))
 
+    def enable_pch(self):
+        using_ccache = bool(self.globalEnv.get('_NINJA_CCACHE', ''))
+        assert not using_ccache # XXX TODO
+        pch_dir = ospath('build/%s/mongo/'%self.globalEnv.subst('$VARIANT_DIR'))
+        pch_tool = 'SHCXX' if 'SHCXX' in self.tool_commands else 'CXX'
+        pchvars = {}
+        for build in self.builds:
+            if build['rule'] == pch_tool:
+                if build['inputs'][0].startswith(ospath('src/mongo')):
+                    if build['inputs'][0] == ospath('src/mongo/bson/bsonobj.cpp'):
+                        # HACK: this happens to be a good file to base the pch flags off of.
+                        pchvars = dict(**build['variables'])
+
+                    if using_ccache:
+                        # TODO look into ccache's sloppiness=pch_defines setting and see if it is
+                        # safe for our uses. For now disable ccache on files using pch since ccache
+                        # will refuse to cache them anyway.
+                        build['variables']['CCACHE'] = ''
+
+                    pch_file = 'test-pch.h' if 'test' in build['inputs'][0] else 'pch.h'
+                    if not self.globalEnv.ToolchainIs('msvc'):
+                        # -include uses path to file
+                        build['variables']['pch_flags'] = '-include ' + pch_dir + pch_file
+                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.$pch_suffix')
+                    else:
+                        # /FI and friends use the same rules as #include
+                        build['variables']['pch_flags'] = (
+                                '/Fp{0}{1}.$pch_suffix /Yumongo/{1} /FImongo/{1}'
+                                    .format(pch_dir, pch_file))
+                        # Ninja only knows about the .obj file and uses that, not the .pch file, to
+                        # track header dependencies. This works around the ninja limitation that
+                        # rules using 'deps' can't have builds with multiple outputs.
+                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.obj')
+
+            elif build['rule'] == 'LINK' and self.globalEnv.ToolchainIs('msvc'):
+                build.setdefault('inputs', []).extend([pch_dir+'pch.h.obj',
+                                                       pch_dir+'test-pch.h.obj'])
+
+        self.vars['pch_flags'] = ''
+        self.vars['pch_suffix'] = 'gch' if self.globalEnv.ToolchainIs('gcc') else 'pch'
+
+        if not self.globalEnv.ToolchainIs('msvc'):
+            # position matters on non-msvc compilers
+            self.tool_commands[pch_tool] = self.tool_commands[pch_tool].replace('$out', '$out $pch_flags')
+            pchvars['pch_flags']= '-x c++-header'
+        else:
+            self.tool_commands[pch_tool] += ' $pch_flags'
+
+        for pch_file in ('pch.h', 'test-pch.h'):
+            # Copy the pch headers to the build dir so the compiled pch is there rather than in the
+            # source tree. They need to be in the same directory.
+            self.builds.append(dict(
+                rule='INSTALL',
+                inputs=sibling(pch_file),
+                outputs=pch_dir + pch_file))
+
+            if not self.globalEnv.ToolchainIs('msvc'):
+                self.builds.append(dict(
+                    rule=pch_tool,
+                    inputs=pch_dir + pch_file,
+                    outputs=pch_dir + pch_file + '.$pch_suffix',
+                    order_only='_generated_headers',
+                    variables=pchvars,
+                    ))
+            else:
+                pchvars['_MSVC_OUTPUT_FLAG'] = '/Fo%s%s.obj'%(pch_dir, pch_file)
+                pchvars['pch_flags'] = '/Fp{0} /Yc{1} /FI{1}'.format(pch_dir + pch_file + '.pch',
+                                                                  'mongo/' + pch_file)
+                self.builds.append(dict(
+                    rule=pch_tool,
+                    inputs=pch_dir + pch_file,
+                    outputs=pch_dir + pch_file + '.obj',
+                    order_only='_generated_headers',
+                    variables=dict(pchvars), # copy it
+                    # can't have multiple outputs.
+                    #implicit_outputs=pch_dir + pch_file + '.pch', 
+                    ))
 
     def write(self):
         # Defer touching the actual .ninja file until we are done building the contents to minimize
@@ -640,6 +728,7 @@ class NinjaFile(object):
 
         ninja.newline()
         for name in sorted(self.vars):
+            assert not '$' in self.vars[name]
             ninja.variable(name, self.vars[name])
 
         ninja.newline()
@@ -921,6 +1010,11 @@ def configure(conf, env):
         # ninja filter out the colors if the real stdout is redirected.
         env.Append(CCFLAGS=["-fdiagnostics-color=always"])
 
+        if env.ToolchainIs('clang'):
+            # Needed to make clang++ play nicely with ccache and pch. Ideally this would use
+            # AddToCCFLAGSIfSupported but that isn't available to modules.
+            env.Append(CCFLAGS=["-Qunused-arguments"])
+
         using_gsplitdwarf = any('-gsplit-dwarf' in env[var]
                                 for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS'))
 
@@ -934,10 +1028,6 @@ def configure(conf, env):
             env['_NINJA_CCACHE'] = where_is(env, 'ccache')
         if env['_NINJA_CCACHE']:
             action_str += " with ccache support (pass --no-cache to scons to disable)"
-            if env.ToolchainIs('clang'):
-                # Needed to make clang++ play nicely with ccache. Ideally this would use
-                # AddToCCFLAGSIfSupported but that is available to modules.
-                env.Append(CCFLAGS=["-Qunused-arguments"])
 
             settings = subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
             if 'max_size = 5.0G' in settings:
