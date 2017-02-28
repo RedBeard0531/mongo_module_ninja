@@ -14,9 +14,9 @@ cd src/mongo/db/modules
 git clone https://github.com/RedBeard0531/mongo_module_ninja ninja
 cd -
 
-# On non-linux, remove --link-model=static and -gsplit-dwarf.
+# On non-linux, remove -gsplit-dwarf.
 # Also, read the section about split DWARF below.
-python buildscripts/scons.py --link-model=static CC=clang CXX=clang++ \
+python buildscripts/scons.py CC=clang CXX=clang++ \
     CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
     MONGO_VERSION='0.0.0' MONGO_GIT_HASH='unknown' \
     VARIANT_DIR=ninja --modules=ninja \
