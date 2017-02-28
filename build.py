@@ -276,7 +276,7 @@ class NinjaFile(object):
             assert len(n.executor.get_action_list()) == 1
             action = n.executor.get_action_list()[0]
 
-        if str(n.executor).startswith('${TEMPFILE("'):
+        if any(str(n.executor).startswith('${TEMPFILE('+quote) for quote in ('"', "'")):
             # Capture the real action under the tempfile.
             cmd = []
             def TEMPFILE(cmd_, comstr=None):
