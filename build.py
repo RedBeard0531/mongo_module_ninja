@@ -37,7 +37,7 @@ def makeNinjaFile(target, source, env):
 
 def rglob(pattern, root='.') :
     return [os.path.join(path, f)
-            for path, dirs, files in os.walk(root)
+            for path, dirs, files in os.walk(root, followlinks=True)
             for f in fnmatch.filter(files, pattern)]
 
 def where_is(env, exe):
