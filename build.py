@@ -249,7 +249,7 @@ class NinjaFile(object):
                     action = n.executor.get_action_list()[0]
 
             # Strip out the functions from shared library builds.
-            if '\n$SHLINK' in str(n.executor):
+            if '$SHLINK' in str(n.executor):
                 assert len(lines) == 3
 
                 # Run the check now. It doesn't need to happen at runtime.
