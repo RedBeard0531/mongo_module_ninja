@@ -611,17 +611,15 @@ class NinjaFile(object):
         assert not using_ccache # XXX TODO
         pch_dir = ospath('build/%s/mongo/'%self.globalEnv.subst('$VARIANT_DIR'))
         pch_tool = 'SHCXX' if 'SHCXX' in self.tool_commands else 'CXX'
-        pchvars = {}
         for build in self.builds:
             if build['rule'] == pch_tool:
                 if build['inputs'][0].startswith(ospath('src/mongo')):
                     if build['inputs'][0] == ospath('src/mongo/bson/bsonobj.cpp'):
                         # HACK: this happens to be a good file to base the pch flags off of.
-                        pchvars = dict(**build['variables'])
+                        pchvars = dict(build['variables'])
 
-                    if using_ccache:
-                        # TODO look into ccache's sloppiness=pch_defines setting and see if it is
-                        # safe for our uses. For now disable ccache on files using pch since ccache
+                    if using_ccache and '_NINJA_CCACHE_WITH_PCH' not in self.globalEnv:
+                        # TODO For now disable ccache on files using pch since unpatched ccache
                         # will refuse to cache them anyway.
                         build['variables']['CCACHE'] = ''
 
@@ -653,6 +651,7 @@ class NinjaFile(object):
             pchvars['pch_flags']= '-x c++-header'
         else:
             self.tool_commands[pch_tool] += ' $pch_flags'
+            pchvars['CCACHE'] = '' # Never cache the pch file itself.
 
         for pch_file in ('pch.h', 'test-pch.h'):
             # Copy the pch headers to the build dir so the compiled pch is there rather than in the
@@ -1042,6 +1041,11 @@ def configure(conf, env):
                 print '*** ccache -o run_second_cpp=true'
                 print '***'
                 Exit(1)
+
+            if re.search('sloppiness = .*ignore_implicit_pch', settings):
+                # Running a patched ccache and opted in to ignore_implicit_pch.
+                # Don't disable ccache on compiles using pch.
+                env['_NINJA_CCACHE_WITH_PCH'] = True
 
             if using_gsplitdwarf:
                 version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
