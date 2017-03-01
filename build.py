@@ -499,11 +499,15 @@ class NinjaFile(object):
                     description = 'SHCC $out')
             if 'SHLINK' in self.tool_commands:
                 ninja.rule('SHLINK',
-                    command = self.tool_commands['SHLINK'],
+                    command = '$SHLINK @$out.rsp',
+                    rspfile = '$out.rsp',
+                    rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', ''),
                     description = 'DYNLIB $out')
             if 'LINK' in self.tool_commands:
                 ninja.rule('LINK',
-                    command = self.tool_commands['LINK'],
+                    command = '$LINK @$out.rsp',
+                    rspfile = '$out.rsp',
+                    rspfile_content = self.tool_commands['LINK'].replace('$LINK ', ''),
                     description = 'LINK $out')
             if 'AR' in self.tool_commands:
                 # We need to remove $out because the file existing can confuse ar. This is particularly
