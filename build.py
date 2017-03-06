@@ -673,7 +673,8 @@ def configure(conf, env):
             if using_gsplitdwarf:
                 version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
                                      .split('\n', 1)[0]
-                                     .split()[-1])
+                                     .split()[-1]
+                                     .split('+')[0])
                 if map(int, version.split('.')) < [3, 2, 3]:
                     print "*** -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
                     Exit(1)
