@@ -1,5 +1,6 @@
 import SCons
 from SCons.Script import *
+from SCons.Util import flatten
 
 import os
 import re
@@ -73,6 +74,7 @@ class NinjaFile(object):
 
         self.find_build_nodes()
         self.find_aliases()
+        self.add_run_test_builds()
 
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
@@ -82,6 +84,16 @@ class NinjaFile(object):
 
         assert 'PYTHON' not in self.vars
         self.vars['PYTHON'] = self.globalEnv.WhereIs('$PYTHON')
+
+    def add_run_test_builds(self):
+        # For everything that gets installed to build/unittests, add a rule for +basename
+        # that runs the test from its original location.
+        tests = [flatten(build['inputs'])[0]
+                 for build in self.builds
+                 if build['rule'] == 'INSTALL'
+                 and flatten(build['outputs'])[0].startswith('build/unittests/')]
+        self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
+                        for test in tests]
 
     def find_aliases(self):
         for alias in SCons.Node.Alias.default_ans.values():
@@ -447,6 +459,11 @@ class NinjaFile(object):
     def write_rules(self, ninja):
         ninja.newline()
 
+        ninja.rule('RUN_TEST',
+                command='$in',
+                description='RUN_TEST $in',
+                pool='console') # show live output.
+
         ninja.rule('EXEC', command='$command')
         ninja.rule('EXEC_RSP',
                 command='$command',
@@ -557,7 +574,7 @@ class NinjaFile(object):
         ninja.build('_ALWAYS_BUILD', 'phony')
 
     def write_regenerator(self, ninja):
-        deps = SCons.Util.flatten([
+        deps = flatten([
             'SConstruct',
             rglob('SConscript', 'src'),
             rglob('*.py', 'site_scons'),

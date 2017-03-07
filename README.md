@@ -67,6 +67,14 @@ up with `--help` so they are documented here.
    `/tmp/ccache.log`. It should tell you why it isn't able to use the cache. If
    that doesn't help, see step 1.
 
+## Building and running unit tests
+
+You can run `ninja +name_of_test` to build then run a cpp unit test. This uses
+the "basename" of the test, so `build/ninja/mongo/bson/bson_obj_test` is just
+`ninja +bson_obj_test`. This is intended to simplify iterating on one or two
+tests. To run all of the unittests, continue to use something like `ninja
+unittests && buildscripts/resmoke.py --sute=unittests -j16`.
+
 ## ccache support
 
 If you have `ccache` installed and on your path, it will be used automatically.
