@@ -55,6 +55,8 @@ up with `--help` so they are documented here.
 ## Troubleshooting
 
 1. Email or slack me (Mathias) if you run in to any problems.
+1. If scons says your C or C++ compiler doesn't work, pass the `--config=force`
+   flag to scons.
 1. If you get an error about `is_derived_node` you are using an old version of
    scons. Try using `python buildscripts/scons.py` rather than just `scons`.
 1. If you get an error about `Unknown variables specified:` try removing all of
