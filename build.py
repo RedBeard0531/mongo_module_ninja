@@ -27,6 +27,13 @@ AddOption('--link-pool-depth',
         dest='link-pool-depth',
         help='WINDOWS ONLY: limit of concurrent links (default 4)')
 
+AddOption('--ninja-builddir',
+        type='str',
+        action='store',
+        dest='ninja_builddir',
+        help="Set the location of ninja's builddir for the .ninja_log and .ninja_deps files"
+             " (default is current directory)")
+
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
@@ -442,6 +449,8 @@ class NinjaFile(object):
         # We can probably drop this to 1.5, but I've only tested with 1.7.
         ninja.newline()
         ninja.variable('ninja_required_version', '1.7')
+        if GetOption('ninja_builddir'):
+            ninja.variable('builddir', GetOption('ninja_builddir'))
 
         ninja.newline()
         ninja.variable('scons_args',

@@ -50,6 +50,7 @@ up with `--help` so they are documented here.
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
 | `--link-pool-depth=NNN` | 4 | **WINDOWS ONLY**: limit the number of concurrent link tasks |
+| `--ninja-builddir=path` | current directory | Where ninja stores [its database](https://ninja-build.org/manual.html#ref_log). **Delete your `build/` directory if you change this!** |
 
 ## Troubleshooting
 
