@@ -444,6 +444,10 @@ class NinjaFile(object):
         for default in sorted(strmap(DEFAULT_TARGETS)):
             ninja.default(default)
 
+        # Tell vim not to break up long lines.
+        ninja.newline()
+        ninja.comment('vim: set textwidth=0 :')
+
         with open(self.ninja_file, 'w') as file:
             file.write(content.getvalue())
         if self.globalEnv['NINJA'] and not self.globalEnv.TargetOSIs('windows'):
