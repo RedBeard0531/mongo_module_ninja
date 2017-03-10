@@ -15,7 +15,7 @@ git clone https://github.com/RedBeard0531/mongo_module_ninja ninja
 cd -
 
 # On non-linux, remove -gsplit-dwarf.
-# Also, read the section about split DWARF below.
+# Also, be sure to read the section about split DWARF below.
 python buildscripts/scons.py CC=clang CXX=clang++ \
     CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
     MONGO_VERSION='0.0.0' MONGO_GIT_HASH='unknown' \
@@ -145,9 +145,17 @@ they can be used together. `scons` will error if you use -gsplit-dwarf with an
 older ccache or an unsupported platform.
 
 In order to actually *use* the dwarf info, your debugging tools will need to
-support it. I've tested the latest gdb, perf, addr2line, and llvm-symbolizer
+support it. I've tested the latest perf, addr2line, and llvm-symbolizer
 (used by `mongosymb.py`) on linux and they all work. I don't know about older
 versions or other tools. If your tool of choice doesn't work, upgrade or remove
 `-gsplit-dwarf` and recompile.
+
+GDB >= 7.11 has a [bug](https://sourceware.org/bugzilla/show_bug.cgi?id=20899)
+that makes it show all namespaces other than `std` as `(anonymous namespace)`.
+If this affects you, you can either recompile without `-gsplit-dwarf` or apply
+the patch from that ticket to your gdb. If you are a MongoDB employee, you can
+download the latest version of
+[our toolchain](https://evergreen.mongodb.com/waterfall/toolchain-builder) which
+includes a patched gdb.
 
 <!-- vim: set tw=80 : -->
