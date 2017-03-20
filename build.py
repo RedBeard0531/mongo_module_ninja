@@ -408,11 +408,18 @@ class NinjaFile(object):
                 myVars[name] = '$%s_%s'%(name, num)
 
         # Since the scons command line uses '$TARGET' it only expects the first target to be passed.
-        # Everything else must be an implicit output
+        # Everything else must be an implicit output. Additionally, removing .dwo files from targets
+        # to work around ninja limitation that build rules using the 'depslog' can't have multiple
+        # outputs. ccache will still handle them correctly, the only real downside is that the
+        # 'clean' tool won't remove them. An alternative solution would be removing the 'deps=gcc'
+        # setting from the rules definition, but that has significant overhead (~1s no-op builds) so
+        # I don't think the tradeoff is worth it.
+        # For more details see: https://github.com/ninja-build/ninja/issues/1184
+        targets = [t for t in strmap(targets) if not t.endswith('.dwo')]
         self.builds.append(dict(
             rule=tool,
-            outputs=str(targets[0]),
-            implicit_outputs=strmap(targets[1:]),
+            outputs=targets[0],
+            implicit_outputs=targets[1:],
             inputs=strmap(sources),
             implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
             order_only='_generated_headers'
