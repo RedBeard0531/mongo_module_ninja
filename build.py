@@ -157,6 +157,19 @@ class NinjaFile(object):
 
     def handle_build_node(self, n):
         # TODO break this function up
+
+        if n.executor.post_actions:
+            # We currently use this in exactly one place. For now just handle that case.
+            assert len(n.executor.post_actions) == 1
+            assert len(n.executor.action_list) == 1
+            assert n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action
+            assert str(n.executor.post_actions[0]).startswith('Chmod(')
+            assert 'oug+x' in str(n.executor.post_actions[0])
+            n.executor.post_actions = []
+            do_chmod = True
+        else:
+            do_chmod = False
+
         assert n.has_builder()
         assert not n.side_effect
         assert not n.side_effects
@@ -197,13 +210,14 @@ class NinjaFile(object):
 
         if action == SCons.Tool.textfile._subst_builder.action:
             implicit_deps.append(subst_file_script)
+            args = dict(do_chmod=do_chmod, subs=myEnv['SUBST_DICT'])
             self.builds.append(dict(
                 rule='SCRIPT_RSP',
                 outputs=strmap(targets),
                 inputs=strmap(sources),
                 implicit=implicit_deps,
                 variables={
-                    'rspfile_content': ninja_syntax.escape(json.dumps(myEnv['SUBST_DICT'])),
+                    'rspfile_content': ninja_syntax.escape(json.dumps(args)),
                     'script': subst_file_script,
                     }
                 ))
