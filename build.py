@@ -405,7 +405,14 @@ class NinjaFile(object):
             assert not name.startswith('SOURCE')
             assert re.match(r'^[a-zA-Z_]*$', name)
 
-            mySubst = myEnv.subst(word, executor=n.executor)
+            if name != '_LIBFLAGS':
+                mySubst = myEnv.subst(word, executor=n.executor)
+            else:
+                # Expanding $_LIBDEPS in scons is very slow. Do it ourselves.
+                (pre, post) = myEnv['_LIBFLAGS'].split(' $_LIBDEPS ')
+                mySubst = ' '.join([myEnv.subst(pre, executor=n.executor)] +
+                                    ['"%s"'%libdep for libdep in libdeps] +
+                                    [myEnv.subst(post, executor=n.executor)])
 
             if name in ('_LIBFLAGS', '_PDB', '_MSVC_OUTPUT_FLAG'):
                 # These are never worth commoning since they are always different.
