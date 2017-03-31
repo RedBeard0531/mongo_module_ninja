@@ -14,8 +14,9 @@ fi
 usage ()
 {
     echo "usage: $0 --gcc <gcc_path> <g++_path>"
-    echo "usage: $0 --clang <clang_path>"
+    echo "usage: $0 --clang <clang_path> <compiler_wrapper>"
     echo "usage: Use --addfile <file> to add extra files."
+    echo "usage: Remaining argument (if present) is used as output path."
 }
 
 is_contained ()
@@ -38,6 +39,7 @@ add_file ()
   # ls -H isn't really the same as readlink, but
   # readlink is not portable enough.
   path=`ls -H $path`
+  name="$(echo "$name" | sed -e 's|[^/]*/../||g')" # attempt to resolve foo/../bar
   toadd="$name=$path"
   if test "$name" = "$path"; then
     toadd=$path
@@ -183,7 +185,8 @@ else
             # accept 2nd argument being the compilerwrapper binary, for backwards compatibility
             shift
         else
-            added_compilerwrapper=/usr/local/libexec/icecc/compilerwrapper
+            usage
+            exit 1
         fi
         clang=1
     else
@@ -237,6 +240,9 @@ while test "x$1" = "x--addfile"; do
     shift
 done
 
+out_file=$1
+shift
+
 tempdir=`mktemp -d /tmp/iceccenvXXXXXX`
 
 # for testing the environment is usable at all
@@ -270,6 +276,13 @@ if test -n "$gcc"; then
       add_file "$gcc_as" /usr/bin/as
     fi
 
+    gcc_objcopy=$($added_gcc -print-prog-name=objcopy)
+    if test "$gcc_objcopy" = "objcopy"; then
+      add_file /usr/bin/objcopy
+    else
+      add_file "$gcc_objcopy" /usr/bin/objcopy
+    fi
+
     search_addfile $added_gcc specs
     search_addfile $added_gcc liblto_plugin.so
 fi
@@ -284,9 +297,13 @@ if test -n "$clang"; then
 
     add_file $($added_clang -print-prog-name=as) /usr/bin/as
 
+    if test -z "$gcc_objcopy"; then
+      add_file $($added_clang -print-prog-name=objcopy) /usr/bin/objcopy
+    fi
+
     # clang always uses its internal .h files
     clangincludes=$(dirname $($added_clang -print-file-name=include/limits.h))
-    clangprefix=$(dirname $(dirname $added_clang))
+    clangprefix=$(dirname $(dirname $(abs_path $added_clang)))
     for file in $(find $clangincludes -type f); do
       # get path without ..
       # readlink is not portable enough.
@@ -300,10 +317,6 @@ fi
 for extrafile in $extrafiles; do
     add_file $extrafile
 done
-
-if [ -e /usr/bin/objcopy ]; then
-    add_file /usr/bin/objcopy
-fi
 
 if test "$is_darwin" = 1; then
     # add dynamic linker
@@ -326,6 +339,10 @@ if test -f /etc/ld.so.conf; then
   done </etc/ld.so.conf >$tmp_ld_so_conf
   add_file $tmp_ld_so_conf /etc/ld.so.conf
 fi
+
+for file in /etc/ld.so.conf.d/*.conf; do
+  add_file $file
+done
 
 # special case for weird multilib setups
 for dir in /lib /lib64 /usr/lib /usr/lib64; do
@@ -374,9 +391,14 @@ md5=`for i in $target_files; do $md5sum $tempdir/$i; done | sed -e 's/ .*$//' | 
   echo "Couldn't compute MD5 sum."
   exit 2
 }
+
+if [ -n "$out_file" ]; then
+    md5="$(dirname $out_file)/$md5"
+fi
+
 echo "creating $md5.tar.gz"
 mydir=`pwd`
-cd $tempdir
+pushd $tempdir > /dev/null
 tar -czh --numeric-owner -f "$mydir/$md5".tar.gz $target_files || {
   echo "Couldn't create archive"
   exit 3
@@ -384,6 +406,12 @@ tar -czh --numeric-owner -f "$mydir/$md5".tar.gz $target_files || {
 cd ..
 rm -rf $tempdir
 rm -f $tmp_ld_so_conf
+popd > /dev/null
+
+if [ -n "$out_file" ]; then
+    echo "linking $out_file to $md5.tar.gz"
+    ln -sf "$(basename "$md5.tar.gz")" "$out_file"
+fi
 
 # Print the tarball name to fd 5 (if it's open, created by whatever has invoked this)
 ( echo $md5.tar.gz >&5 ) 2>/dev/null

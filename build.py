@@ -35,9 +35,17 @@ AddOption('--ninja-builddir',
         help="Set the location of ninja's builddir for the .ninja_log and .ninja_deps files"
              " (default is current directory)")
 
+AddOption('--icecream',
+        default=False,
+        action='store_true',
+        dest='icecream',
+        help='Use the icecream distributed compile server')
+
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
+icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
+icecc_gcc_wrapper = os.path.abspath(os.path.join(my_dir, 'icecream', 'icecc-gcc-wrapper'))
 
 def makeNinjaFile(target, source, env):
     assert not source
@@ -54,9 +62,13 @@ def where_is(env, exe):
     if not path:
         # check a few places that are often on $PATH but scons hides.
         if os.path.exists('/usr/local/bin/'+exe):
-            path = '/usr/local/bin/ccache'
+            path = '/usr/local/bin/'+exe
+        elif os.path.exists(os.path.expanduser('~/bin/')+exe):
+            path = os.path.expanduser('~/bin/')+exe
         elif os.path.exists('/opt/local/bin/'+exe):
             path = '/opt/local/bin/'+exe
+        elif os.path.exists('/usr/lib/icecream/bin/'+exe):
+            path = '/usr/lib/icecream/bin/'+exe
 
     # Normalize missing to '' rather than None
     return path if path else ''
@@ -84,6 +96,11 @@ class NinjaFile(object):
         self.find_aliases()
         self.add_run_test_builds()
 
+        if env.get('_NINJA_CCACHE'):
+            self.set_up_ccache()
+        if env.get('_NINJA_ICECC'):
+            self.set_up_icecc()
+
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
             self.vars['COPY'] = 'cmd /c copy'
@@ -102,6 +119,78 @@ class NinjaFile(object):
                  and flatten(build['outputs'])[0].startswith(os.path.join('build', 'unittests'))]
         self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
                         for test in tests]
+
+    def set_up_ccache(self):
+        for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+            if rule in self.tool_commands:
+                self.tool_commands[rule] = '{} {}'.format(
+                        self.globalEnv['_NINJA_CCACHE'],
+                        self.tool_commands[rule])
+
+    def set_up_icecc(self):
+        cc = self.globalEnv.WhereIs('$CC')
+        cxx = self.globalEnv.WhereIs('$CXX')
+
+        # This is a symlink that points to the real environment file with the md5sum name. This is
+        # important because icecream assumes that same-named environments are identical, but we need
+        # to give ninja a fixed name for dependency tracking.
+        version_file = 'build/icecc_envs/{}.tar.gz'.format(cc.replace('/', '_'))
+        env_flags = [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
+
+        if self.globalEnv.ToolchainIs('clang'):
+            env_flags += [
+                'ICECC_CLANG_REMOTE_CPP=1',
+                'CCACHE_PREFIX=' + self.globalEnv['_NINJA_ICECC'],
+            ]
+
+            self.builds.append(dict(
+                rule='MAKE_ICECC_ENV',
+                inputs=icecc_create_env,
+                outputs=version_file,
+                implicit=cc,
+                variables=dict(
+                    cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} {out}'.format(
+                        icecc_create_env=icecc_create_env,
+                        clang=os.path.realpath(cc),
+                        compiler_wrapper='/bin/true', # we require a new enough iceccd.
+                        out=version_file),
+                    )
+                ))
+        else:
+            env_flags += [
+                'REAL_ICECC=' + self.globalEnv['_NINJA_ICECC'],
+                'CCACHE_PREFIX=' + icecc_gcc_wrapper,
+            ]
+
+            self.builds.append(dict(
+                rule='MAKE_ICECC_ENV',
+                inputs=icecc_create_env,
+                outputs=version_file,
+                implicit=[cc, cxx],
+                variables=dict(
+                    cmd='{icecc_create_env} --gcc {gcc} {gxx} {out}'.format(
+                        icecc_create_env=icecc_create_env,
+                        gcc=os.path.realpath(cc),
+                        gxx=os.path.realpath(cxx),
+                        out=version_file),
+                    )
+                ))
+
+        for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+            if rule in self.tool_commands:
+                self.tool_commands[rule] = ' '.join(env_flags + [self.tool_commands[rule]])
+
+        for build in self.builds:
+            if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+                build.setdefault('order_only', []).append(version_file)
+
+        # Run links through icerun to inform the scheduler that we are busy and to prevent running
+        # hundreds of parallel links.
+        for rule in ('LINK', 'SHLINK'):
+            if rule in self.tool_commands:
+                self.tool_commands[rule] = '{} {}'.format(
+                        self.globalEnv['_NINJA_ICERUN'],
+                        self.tool_commands[rule])
 
     def find_aliases(self):
         for alias in SCons.Node.Alias.default_ans.values():
@@ -259,7 +348,7 @@ class NinjaFile(object):
                 rule='EXEC',
                 outputs=strmap(targets),
                 implicit=self.ninja_file,
-                order_only='generated-sources', # These should be updated along with the compdb.
+                order_only=['generated-sources'], # These should be updated along with the compdb.
                 variables={
                     'command': cmd
                     },
@@ -447,9 +536,9 @@ class NinjaFile(object):
             implicit_outputs=targets[1:],
             inputs=strmap(sources),
             implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
-            order_only='_generated_headers'
+            order_only=['_generated_headers']
                        if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
-                       else None,
+                       else [],
             variables=myVars,
             ))
 
@@ -536,44 +625,57 @@ class NinjaFile(object):
             description = 'SCONSGEN $out',
             restat=1)
 
+        if self.globalEnv.get('_NINJA_ICECC'):
+            ninja.rule('MAKE_ICECC_ENV',
+                command = '$cmd',
+                pool = 'console', # slow, so show progress.
+                description = 'MAKE_ICECC_ENV $out')
+
         if self.globalEnv.ToolchainIs('gcc', 'clang'):
             # ninja ignores leading spaces so this will work fine if empty.
-            ccache = self.globalEnv.get('_NINJA_CCACHE', '')
             if 'CXX' in self.tool_commands:
                 ninja.rule('CXX',
                     deps = 'gcc',
                     depfile = '$out.d',
-                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CXX']),
+                    command = '%s -MMD -MF $out.d'%(self.tool_commands['CXX']),
                     description = 'CXX $out')
             if 'SHCXX' in self.tool_commands:
                 ninja.rule('SHCXX',
                     deps = 'gcc',
                     depfile = '$out.d',
-                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCXX']),
+                    command = '%s -MMD -MF $out.d'%(self.tool_commands['SHCXX']),
                     description = 'SHCXX $out')
             if 'CC' in self.tool_commands:
                 ninja.rule('CC',
                     deps = 'gcc',
                     depfile = '$out.d',
-                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['CC']),
+                    command = '%s -MMD -MF $out.d'%(self.tool_commands['CC']),
                     description = 'CC $out')
             if 'SHCC' in self.tool_commands:
                 ninja.rule('SHCC',
                     deps = 'gcc',
                     depfile = '$out.d',
-                    command = '%s %s -MMD -MF $out.d'%(ccache, self.tool_commands['SHCC']),
+                    command = '%s -MMD -MF $out.d'%(self.tool_commands['SHCC']),
                     description = 'SHCC $out')
             if 'SHLINK' in self.tool_commands:
+                command = self.tool_commands['SHLINK']
+                i = command.find('$SHLINK ') + len('$SHLINK')
+                prefix = command[:i]
+                args = command[i + 1:]
                 ninja.rule('SHLINK',
-                    command = '$SHLINK @$out.rsp',
+                    command = prefix + ' @$out.rsp',
                     rspfile = '$out.rsp',
-                    rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', ''),
+                    rspfile_content = args,
                     description = 'DYNLIB $out')
             if 'LINK' in self.tool_commands:
+                command = self.tool_commands['LINK']
+                i = command.find('$LINK ') + len('$LINK')
+                prefix = command[:i]
+                args = command[i + 1:]
                 ninja.rule('LINK',
-                    command = '$LINK @$out.rsp',
+                    command = prefix + ' @$out.rsp',
                     rspfile = '$out.rsp',
-                    rspfile_content = self.tool_commands['LINK'].replace('$LINK ', ''),
+                    rspfile_content = args,
                     description = 'LINK $out')
             if 'AR' in self.tool_commands:
                 # We need to remove $out because the file existing can confuse ar. This is particularly
@@ -749,6 +851,29 @@ def configure(conf, env):
                 print "*** WARNING: to get the most out of ccache, pass these flags to scons:"
                 print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
                 print '***'
+
+        if GetOption('icecream'):
+            if not env.TargetOSIs('linux'):
+                print 'icecream is currently only supported on linux'
+                Exit(1)
+            if not env['_NINJA_CCACHE']:
+                print 'icecream currently requires ccache'
+                Exit(1)
+
+            env['_NINJA_ICECC'] = where_is(env, 'icecc')
+            if not env['_NINJA_ICECC']:
+                print "Can't find icecc."
+                Exit(1)
+
+            env['_NINJA_ICERUN'] = where_is(env, 'icerun')
+            if not env['_NINJA_ICERUN']:
+                print "Can't find icerun."
+                Exit(1)
+
+            version = subprocess.check_output([env['_NINJA_ICECC'], '--version']).split()[1]
+            if version != '1.1rc2':
+                print "This requires icecc 1.1rc2, but you have " + version
+                Exit(1)
 
     for ninja_file in ninja_files:
         cmd = env.Command(ninja_file, [], Action(makeNinjaFile, action_str))

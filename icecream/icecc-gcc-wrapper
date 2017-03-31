@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Tell gcc not to fully preprocess the input file locally. This is like ICECC_CLANG_REMOTE_CPP=1.
+"$REAL_ICECC" $* -fdirectives-only
