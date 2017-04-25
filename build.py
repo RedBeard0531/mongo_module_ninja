@@ -11,6 +11,7 @@ import json
 import shlex
 import fnmatch
 import subprocess
+import multiprocessing
 
 my_dir = os.path.dirname(__file__)
 
@@ -597,6 +598,19 @@ class NinjaFile(object):
     def write_rules(self, ninja):
         ninja.newline()
 
+        local_pool=None
+        if self.globalEnv.get('_NINJA_ICECC'):
+            # The local_pool is used for all operations that don't go through icecc and aren't
+            # already using another pool. This ensures that we don't overwhelm the system when
+            # using very high -j values.
+            local_pool = 'local'
+            ninja.pool('local', multiprocessing.cpu_count())
+
+            ninja.rule('MAKE_ICECC_ENV',
+                command = '$cmd',
+                pool = 'console', # slow, so show progress.
+                description = 'MAKE_ICECC_ENV $out')
+
         ninja.rule('RUN_TEST',
                 command='$in',
                 description='RUN_TEST $in',
@@ -605,16 +619,19 @@ class NinjaFile(object):
         ninja.rule('EXEC', command='$command')
         ninja.rule('EXEC_RSP',
                 command='$command',
+                pool=local_pool,
                 rspfile = '$out.rsp',
                 rspfile_content = '$in',
                 )
 
         ninja.rule('INSTALL',
                 command = '$COPY $in $out',
+                pool=local_pool,
                 description = 'INSTALL $out')
 
         ninja.rule('SCRIPT_RSP',
             command = '$PYTHON $script $in $out $out.rsp',
+            pool=local_pool,
             rspfile = '$out.rsp',
             rspfile_content = '$rspfile_content',
             restat = 1,
@@ -624,12 +641,6 @@ class NinjaFile(object):
             pool = 'console',
             description = 'SCONSGEN $out',
             restat=1)
-
-        if self.globalEnv.get('_NINJA_ICECC'):
-            ninja.rule('MAKE_ICECC_ENV',
-                command = '$cmd',
-                pool = 'console', # slow, so show progress.
-                description = 'MAKE_ICECC_ENV $out')
 
         if self.globalEnv.ToolchainIs('gcc', 'clang'):
             # ninja ignores leading spaces so this will work fine if empty.
@@ -666,6 +677,7 @@ class NinjaFile(object):
                     command = prefix + ' @$out.rsp',
                     rspfile = '$out.rsp',
                     rspfile_content = args,
+                    pool=local_pool,
                     description = 'DYNLIB $out')
             if 'LINK' in self.tool_commands:
                 command = self.tool_commands['LINK']
@@ -676,12 +688,14 @@ class NinjaFile(object):
                     command = prefix + ' @$out.rsp',
                     rspfile = '$out.rsp',
                     rspfile_content = args,
+                    pool=local_pool,
                     description = 'LINK $out')
             if 'AR' in self.tool_commands:
                 # We need to remove $out because the file existing can confuse ar. This is particularly
                 # a problem when switching between thin and non-thin archive files.
                 ninja.rule('AR',
                     command = 'rm -f $out && ' + self.tool_commands['AR'],
+                    pool=local_pool,
                     description = 'STATICLIB $out')
         else:
             for tool in self.tool_commands:
