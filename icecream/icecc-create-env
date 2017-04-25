@@ -370,6 +370,10 @@ for i in $target_files; do
   new_target_files="$new_target_files $target"
 done
 
+mkdir $tempdir/proc
+touch $tempdir/proc/cpuinfo
+new_target_files="$new_target_files proc/cpuinfo"
+
 if test -x /sbin/ldconfig; then
    mkdir -p $tempdir/var/cache/ldconfig
    /sbin/ldconfig -r $tempdir
