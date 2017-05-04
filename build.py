@@ -99,7 +99,7 @@ class NinjaFile(object):
         tests = [flatten(build['inputs'])[0]
                  for build in self.builds
                  if build['rule'] == 'INSTALL'
-                 and flatten(build['outputs'])[0].startswith('build/unittests/')]
+                 and flatten(build['outputs'])[0].startswith(os.path.join('build', 'unittests'))]
         self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
                         for test in tests]
 
