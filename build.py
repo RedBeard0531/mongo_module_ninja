@@ -378,9 +378,13 @@ class NinjaFile(object):
         else:
             self.tool_commands[tool] = cmd
 
+        is_link_model_object = myEnv['_LIBDEPS'] == '$_LIBDEPS_OBJS'
         libdeps = []
         if tool in ('LINK', 'SHLINK'):
-            libdep_func = myEnv[myEnv['_LIBDEPS'].strip('${}')]
+            if is_link_model_object:
+                libdep_func = myEnv[myEnv['_LIBDEPS'].strip('${}')]
+            else:
+                libdep_func = myEnv['_LIBDEPS_GET_LIBS']
             assert callable(libdep_func)
             libdeps = strmap(libdep_func(sources, targets, myEnv, False))
             if myEnv.ToolchainIs('msvc'):
@@ -405,7 +409,7 @@ class NinjaFile(object):
             assert not name.startswith('SOURCE')
             assert re.match(r'^[a-zA-Z_]*$', name)
 
-            if name != '_LIBFLAGS':
+            if not (name == '_LIBFLAGS' and is_link_model_object):
                 mySubst = myEnv.subst(word, executor=n.executor)
             else:
                 # Expanding $_LIBDEPS in scons is very slow. Do it ourselves.
