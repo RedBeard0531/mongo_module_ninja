@@ -39,7 +39,7 @@ add_file ()
   # ls -H isn't really the same as readlink, but
   # readlink is not portable enough.
   path=`ls -H $path`
-  name="$(echo "$name" | sed -e 's|[^/]*/../||g')" # attempt to resolve foo/../bar
+  name="$(echo "$name" | sed -e 's|[^/]*/\.\./||g')" # attempt to resolve foo/../bar
   toadd="$name=$path"
   if test "$name" = "$path"; then
     toadd=$path
