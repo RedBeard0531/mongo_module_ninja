@@ -789,7 +789,7 @@ def configure(conf, env):
     try:
         print "Checking for updates to ninja module..."
         subprocess.check_call(['git', '-C', my_dir, 'fetch'])
-        output = subprocess.check_output(['git', '-C', my_dir, 'log', '--oneline', '@..origin'])
+        output = subprocess.check_output(['git', '-C', my_dir, 'log', '--oneline', '@..@{upstream}'])
         if output:
             print "***"
             print "*** Your ninja module is out of date. New commits:"
