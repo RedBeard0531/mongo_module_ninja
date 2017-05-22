@@ -337,6 +337,11 @@ if test -f /etc/ld.so.conf; then
     fi
     echo "$directive $path"
   done </etc/ld.so.conf >$tmp_ld_so_conf
+
+  # Hack to make mongodbtoolchain clang work.
+  echo '/opt/mongodbtoolchain/v2/lib' >> $tmp_ld_so_conf
+  echo '/opt/mongodbtoolchain/v2/lib64' >> $tmp_ld_so_conf
+
   add_file $tmp_ld_so_conf /etc/ld.so.conf
 fi
 
