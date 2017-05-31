@@ -81,7 +81,7 @@ You can run `ninja +name_of_test` to build then run a cpp unit test. This uses
 the "basename" of the test, so `build/ninja/mongo/bson/bson_obj_test` is just
 `ninja +bson_obj_test`. This is intended to simplify iterating on one or two
 tests. To run all of the unittests, continue to use something like `ninja
-unittests && buildscripts/resmoke.py --sute=unittests -j16`.
+unittests && buildscripts/resmoke.py --suites=unittests -j16`.
 
 ## ccache support
 
