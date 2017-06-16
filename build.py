@@ -441,6 +441,8 @@ class NinjaFile(object):
 
         tool = str(n.executor).split(None, 1)[0]
         if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
+            n.scan() # We need this for IDL.
+            implicit_deps += strmap(n.implicit)
             self.builds.append(dict(
                 rule='EXEC',
                 outputs=strmap(targets),
@@ -715,6 +717,10 @@ class NinjaFile(object):
                 ninja.rule('RC',
                     command = self.tool_commands['RC'],
                     description = 'RC $out')
+            if 'AR' in self.tool_commands:
+                ninja.rule('AR',
+                    command = self.tool_commands['AR'],
+                    description = 'STATICLIB $out')
             if 'LINK' in self.tool_commands:
                 ninja.pool('winlink', GetOption('link-pool-depth'))
                 ninja.rule('LINK',
