@@ -601,6 +601,10 @@ class NinjaFile(object):
                 ninja.rule('RC',
                     command = self.tool_commands['RC'],
                     description = 'RC $out')
+            if 'AR' in self.tool_commands:
+                ninja.rule('AR',
+                    command = self.tool_commands['AR'],
+                    description = 'STATICLIB $out')
             if 'LINK' in self.tool_commands:
                 ninja.pool('winlink', GetOption('link-pool-depth'))
                 ninja.rule('LINK',
