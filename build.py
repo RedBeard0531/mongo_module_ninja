@@ -351,6 +351,8 @@ class NinjaFile(object):
 
         tool = str(n.executor).split(None, 1)[0]
         if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
+            n.scan() # We need this for IDL.
+            implicit_deps += strmap(n.implicit)
             self.builds.append(dict(
                 rule='EXEC',
                 outputs=strmap(targets),
