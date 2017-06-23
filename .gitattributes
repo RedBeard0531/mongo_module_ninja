@@ -1,0 +1,2 @@
+# Fix line endings on shell scripts
+icecream/* text eol=lf
