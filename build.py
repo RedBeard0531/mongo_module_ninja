@@ -17,10 +17,12 @@ my_dir = os.path.dirname(__file__)
 
 try:
     import ninja_syntax
+    import touch_compiler_timestamps
 except ImportError:
     # Sometimes we can't import a sibling file. This makes it possible.
     sys.path.append(my_dir)
     import ninja_syntax
+    import touch_compiler_timestamps
 
 AddOption('--link-pool-depth',
         default=4,
@@ -45,6 +47,8 @@ AddOption('--icecream',
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
+touch_compiler_timestamps_script = os.path.join(my_dir, 'touch_compiler_timestamps.py')
+
 icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
 icecc_gcc_wrapper = os.path.abspath(os.path.join(my_dir, 'icecream', 'icecc-gcc-wrapper'))
 
@@ -96,6 +100,7 @@ class NinjaFile(object):
         self.find_build_nodes()
         self.find_aliases()
         self.add_run_test_builds()
+        self.set_up_complier_upgrade_check()
 
         if env.get('_NINJA_CCACHE'):
             self.set_up_ccache()
@@ -120,6 +125,35 @@ class NinjaFile(object):
                  and flatten(build['outputs'])[0].startswith(os.path.join('build', 'unittests'))]
         self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
                         for test in tests]
+
+    def set_up_complier_upgrade_check(self):
+        # This is based on a suggestion from the ninja mailing list. It creates two files, a
+        # then_file with the mtime of the compiler and a now_file with an mtime of the last time
+        # this task runs. This task depends on the compiler so that if it gets upgraded it will be
+        # newer than the then_file so this task will rerun and update both files. All compiles and
+        # the configure step depend on the now_file, so they get rerun whenever it is updated. This
+        # is all to work around the fact that package managers back-date the mtimes when installing
+        # to the time is was build rather than the time it was installed, so just depending on the
+        # compiler itself doesn't actually work.
+        cxx = self.globalEnv.WhereIs('$CXX')
+        cxx_escaped = cxx.replace('/', '_').replace('\\', '_').replace(':', '_')
+        now_file = os.path.join('build', 'compiler_timestamps', cxx_escaped + '.last_update')
+        then_file = os.path.join('build', 'compiler_timestamps', cxx_escaped + '.mtime')
+        self.compiler_timestamp_file = now_file
+
+        # Run it now if needed so that we don't need to reconfigure twice since the configure job
+        # depends on the timestamp.
+        touch_compiler_timestamps.run_if_needed(cxx, then_file, now_file)
+
+
+        self.builds.append(dict(
+            rule='COMPILER_TIMESTAMPS',
+            inputs=cxx,
+            outputs=[then_file, now_file]))
+
+        for build in self.builds:
+            if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+                build.setdefault('implicit', []).append(self.compiler_timestamp_file)
 
     def set_up_ccache(self):
         for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
@@ -148,7 +182,7 @@ class NinjaFile(object):
                 rule='MAKE_ICECC_ENV',
                 inputs=icecc_create_env,
                 outputs=version_file,
-                implicit=cc,
+                implicit=[cc, self.compiler_timestamp_file],
                 variables=dict(
                     cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} {out}'.format(
                         icecc_create_env=icecc_create_env,
@@ -167,7 +201,7 @@ class NinjaFile(object):
                 rule='MAKE_ICECC_ENV',
                 inputs=icecc_create_env,
                 outputs=version_file,
-                implicit=[cc, cxx],
+                implicit=[cc, cxx, self.compiler_timestamp_file],
                 variables=dict(
                     cmd='{icecc_create_env} --gcc {gcc} {gxx} {out}'.format(
                         icecc_create_env=icecc_create_env,
@@ -638,6 +672,12 @@ class NinjaFile(object):
             rspfile_content = '$rspfile_content',
             restat = 1,
             description = "GEN $out")
+
+        ninja.rule("COMPILER_TIMESTAMPS",
+            command="$PYTHON %s $in $out"%(touch_compiler_timestamps_script),
+            pool=local_pool,
+            description="Checking for compiler upgrades")
+
         ninja.rule('SCONS',
             command = '$PYTHON %s -Q $scons_args $out'%(sys.argv[0]),
             pool = 'console',
@@ -753,6 +793,7 @@ class NinjaFile(object):
             rglob('*.py', 'src/third_party/scons-2.5.0'),
             rglob('*.py', 'src/mongo/db/modules'),
             [self.globalEnv.WhereIs(tool) for tool in self.tool_paths],
+            self.compiler_timestamp_file,
             self.rc_files, # We rely on scons to tell us the deps of windows rc files.
 
             # Depend on git as position as well. This ensures that error codes are always checked
