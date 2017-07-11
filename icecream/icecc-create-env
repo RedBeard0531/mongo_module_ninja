@@ -346,7 +346,12 @@ if test -f /etc/ld.so.conf; then
 fi
 
 for file in /etc/ld.so.conf.d/*.conf; do
-  add_file $file
+    if [ -e "$file" ]; then
+        add_file "$file"
+    else
+        # This can happen with a dangling symlink
+        echo "skipping non-existent file $file"
+    fi
 done
 
 # special case for weird multilib setups
