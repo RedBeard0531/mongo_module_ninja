@@ -342,6 +342,11 @@ if test -f /etc/ld.so.conf; then
   echo '/opt/mongodbtoolchain/v2/lib' >> $tmp_ld_so_conf
   echo '/opt/mongodbtoolchain/v2/lib64' >> $tmp_ld_so_conf
 
+  # Work around new directory layout for clang in ubuntu >= 16.10
+  if [ -n "$clangprefix" ]; then
+      echo "$clangprefix/lib" >> $tmp_ld_so_conf
+  fi
+
   add_file $tmp_ld_so_conf /etc/ld.so.conf
 fi
 
