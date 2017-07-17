@@ -676,6 +676,7 @@ class NinjaFile(object):
         ninja.rule("COMPILER_TIMESTAMPS",
             command="$PYTHON %s $in $out"%(touch_compiler_timestamps_script),
             pool=local_pool,
+            restat=1,
             description="Checking for compiler upgrades")
 
         ninja.rule('SCONS',
