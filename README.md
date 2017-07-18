@@ -49,6 +49,7 @@ up with `--help` so they are documented here.
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
+| `--icecream` | off | **LINUX ONLY** Use [icecream](#-icecream-support) for distributed compilation |
 | `--link-pool-depth=NNN` | 4 | **WINDOWS ONLY**: limit the number of concurrent link tasks |
 | `--ninja-builddir=path` | current directory | Where ninja stores [its database](https://ninja-build.org/manual.html#ref_log). **Delete your `build/` directory if you change this!** |
 
@@ -69,6 +70,9 @@ up with `--help` so they are documented here.
    ninja -j1`, let it compile a few objects, then look at
    `/tmp/ccache.log`. It should tell you why it isn't able to use the cache. If
    that doesn't help, see step 1.
+1. If you are using icecream and you build seems to hang or go really slowly,
+   try restarting the icecream daemon. `systemctl restart iceccd` or
+   `systemctl restart icecream` depending on which distribution you are using.
 
 ## Building and running unit tests
 
@@ -137,8 +141,6 @@ Please let me know if this causes problems for any tools you use.
 
 ## Split DWARF info
 
-**☠️ WARNING: This is even more experimental than everything else! ☠️**
-
 On linux, you can pass `CCFLAGS=-gsplit-dwarf` to try out split dwarf support
 which makes linking much faster. `ccache` >= 3.2.3 supports it out of the box so
 they can be used together. `scons` will error if you use -gsplit-dwarf with an
@@ -157,5 +159,50 @@ the patch from that ticket to your gdb. If you are a MongoDB employee, you can
 download the latest version of
 [our toolchain](https://evergreen.mongodb.com/waterfall/toolchain-builder) which
 includes a patched gdb.
+
+## 🍨 Icecream support
+
+On linux, you can use [icecream](https://github.com/icecc/icecream) to
+distribute your compile tasks to your neighbors' computers, and literally Build
+Together. This can dramatically reduce the time to do large rebuilds.
+
+1. Make sure you are using [ccache](#ccache-support)
+1. Follow the distribution-specific steps below to install and run the icecream
+   daemon
+1. Add `--icecream` to the list of flags you pass to scons when building your
+   `build.ninja` file
+1. Run `ninja` with a high `-j` value such as `-j400` (this is specifically for
+   when running ninja since the `-j` you pass to scons when building the
+   `build.ninja` file doesn't matter)
+
+Since others can now schedule builds on your machine at any time, consider
+disabling the icecream daemon when doing benchmarking. Depending on your
+distribution, this is either `systemctl stop icecream` or `systemctl stop
+iceccd`. You will want to restart the daemon before compiling again.
+
+Until [this issue](https://github.com/ccache/ccache/issues/185) is resolved,
+ccache requires an additional pass of the C++ preprocessor. This can become a
+bottleneck limiting the speed that you can submit jobs to the cluster. You can
+set the `CCACHE_DISABLE=1` environment variable when running ninja to speed up
+your builds with the trade-off that it won't cache the compilations.
+
+### Installing icecream on Ubuntu (and similar distros)
+
+1. `apt-get install icecc`
+1. Download the `amd64.deb` from
+   [this ppa](http://ppa.launchpad.net/t-oss/icecc-beta/ubuntu/pool/main/i/icecc/)
+   and install it with `dpkg -i` (yes you need to install from the main repo
+   first then upgrade...)
+
+### Installing icecream on ArchLinux
+
+1. Install `icecream` from the [AUR](https://aur.archlinux.org/packages/icecream/)
+1. `systemctl enable --now icecream.service`
+
+### Installing icecream on Fedora
+
+1. `dnf install icecream` and make sure it is installing 1.1rc2
+1. `firewall-cmd --zone=FedoraServer --add-service=icecream`
+1. `firewall-cmd --permanent --zone=FedoraServer --add-service=icecream`
 
 <!-- vim: set tw=80 : -->
