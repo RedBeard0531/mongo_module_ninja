@@ -372,21 +372,11 @@ class NinjaFile(object):
         if str(targets[0]) == 'compile_commands.json' and self.globalEnv['NINJA']:
             assert len(targets) == 1
             # Use ninja to generate the compile db rather than scons.
-            # TODO consider removing this if the scons compilation_db tool becomes more reliable.
-            cmd = '%s -f %s -t compdb CXX CC SHCXX SHCC > %s'%(
-                    self.globalEnv['NINJA'],
-                    self.ninja_file,
-                    str(targets[0]))
-            if self.globalEnv.TargetOSIs('windows'):
-                cmd = 'cmd /c ' + cmd
             self.builds.append(dict(
-                rule='EXEC',
+                rule='COMPILE_DB',
                 outputs=strmap(targets),
-                implicit=self.ninja_file,
+                inputs=self.ninja_file,
                 order_only=['generated-sources'], # These should be updated along with the compdb.
-                variables={
-                    'command': cmd
-                    },
                 ))
             return
 
@@ -684,6 +674,17 @@ class NinjaFile(object):
             pool = 'console',
             description = 'SCONSGEN $out',
             restat=1)
+
+        if self.globalEnv['NINJA']:
+            cmd = self.globalEnv['NINJA'] + ' -f $in -t compdb CXX CC SHCXX SHCC > $out.tmp'
+            if self.globalEnv.TargetOSIs('windows'):
+                cmd = 'cmd /c ' + cmd + ' && move /y $out.tmp $out'
+            else:
+                cmd = cmd + ' && mv -f $out.tmp $out'
+            ninja.rule('COMPILE_DB',
+                    command = cmd,
+                    pool=local_pool,
+                    description = 'COMPILE_DB $out')
 
         if self.globalEnv.ToolchainIs('gcc', 'clang'):
             # ninja ignores leading spaces so this will work fine if empty.
