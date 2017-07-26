@@ -624,13 +624,20 @@ class NinjaFile(object):
     def write_rules(self, ninja):
         ninja.newline()
 
-        local_pool=None
+        local_pool = None
+        compile_pool = None
         if self.globalEnv.get('_NINJA_ICECC'):
             # The local_pool is used for all operations that don't go through icecc and aren't
             # already using another pool. This ensures that we don't overwhelm the system when
             # using very high -j values.
             local_pool = 'local'
             ninja.pool('local', multiprocessing.cpu_count())
+
+            if self.globalEnv['_NINJA_ICECC'] == self.globalEnv['_NINJA_ICERUN']:
+                # Limit concurrency so we don't start a bunch of tasks only to have them bottleneck
+                # in icerun. This is especially helpful when there is an early compile failure so
+                # that we don't keep starting compiles after the first failure.
+                compile_pool = local_pool
 
             ninja.rule('MAKE_ICECC_ENV',
                 command = '$cmd',
@@ -693,24 +700,28 @@ class NinjaFile(object):
                     deps = 'gcc',
                     depfile = '$out.d',
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['CXX']),
+                    pool=compile_pool,
                     description = 'CXX $out')
             if 'SHCXX' in self.tool_commands:
                 ninja.rule('SHCXX',
                     deps = 'gcc',
                     depfile = '$out.d',
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['SHCXX']),
+                    pool=compile_pool,
                     description = 'SHCXX $out')
             if 'CC' in self.tool_commands:
                 ninja.rule('CC',
                     deps = 'gcc',
                     depfile = '$out.d',
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['CC']),
+                    pool=compile_pool,
                     description = 'CC $out')
             if 'SHCC' in self.tool_commands:
                 ninja.rule('SHCC',
                     deps = 'gcc',
                     depfile = '$out.d',
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['SHCC']),
+                    pool=compile_pool,
                     description = 'SHCC $out')
             if 'SHLINK' in self.tool_commands:
                 command = self.tool_commands['SHLINK']
@@ -937,6 +948,15 @@ def configure(conf, env):
             if version < '1.1rc2': # This will need to change once 1.1 is released.
                 print "This requires icecc >= 1.1rc2, but you have " + version
                 Exit(1)
+
+            if any(flag.startswith('-fsanitize-blacklist') for flag in env['CCFLAGS']):
+                print "*** WARNING: The -fsanitize-blacklist flag only works on local builds."
+                print '*** Automatically limiting build concurrency and disabling remote execution.'
+                print '***'
+
+                # Use icerun so the scheduler knows we are busy. Also helps when multiple developers
+                # are using the same machine.
+                env['_NINJA_ICECC'] = env['_NINJA_ICERUN']
 
     for ninja_file in ninja_files:
         cmd = env.Command(ninja_file, [], Action(makeNinjaFile, action_str))
