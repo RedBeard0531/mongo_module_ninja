@@ -830,6 +830,10 @@ def configure(conf, env):
         print "*** --modules= flag to disable the ninja module."
         Exit(1)
 
+    print "*** WARNING: The icecream branch is deprecated now that is has been merged to master."
+    print "*** Please switch to the master branch."
+    print "***"
+
     ninja_files = [str(t) for t in BUILD_TARGETS if str(t).endswith('.ninja')]
     if not ninja_files:
         return
