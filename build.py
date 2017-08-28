@@ -945,7 +945,7 @@ def configure(conf, env):
                 Exit(1)
 
             version = subprocess.check_output([env['_NINJA_ICECC'], '--version']).split()[1]
-            if version < '1.1rc2': # This will need to change once 1.1 is released.
+            if version < '1.1rc2' and version != '1.1' and version < '1.2':
                 print "This requires icecc >= 1.1rc2, but you have " + version
                 Exit(1)
 
