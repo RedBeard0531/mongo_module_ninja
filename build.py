@@ -12,6 +12,7 @@ import shlex
 import fnmatch
 import subprocess
 import multiprocessing
+from buildscripts import errorcodes
 
 my_dir = os.path.dirname(__file__)
 
@@ -102,6 +103,8 @@ class NinjaFile(object):
         self.add_run_test_builds()
         self.set_up_complier_upgrade_check()
 
+        if env.get('_NINJA_USE_ERRCODE'):
+            self.add_error_code_check()
         if env.get('_NINJA_CCACHE'):
             self.set_up_ccache()
         if env.get('_NINJA_ICECC'):
@@ -125,7 +128,6 @@ class NinjaFile(object):
                  and flatten(build['outputs'])[0].startswith(os.path.join('build', 'unittests'))]
         self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
                         for test in tests]
-
     def set_up_complier_upgrade_check(self):
         # This is based on a suggestion from the ninja mailing list. It creates two files, a
         # then_file with the mtime of the compiler and a now_file with an mtime of the last time
@@ -154,6 +156,30 @@ class NinjaFile(object):
         for build in self.builds:
             if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
                 build.setdefault('implicit', []).append(self.compiler_timestamp_file)
+
+    def add_error_code_check(self):
+        timestamp_file = os.path.join('build', 'compiler_timestamps', 'error_code_check.timestamp')
+        command = self.make_command(
+                '$PYTHON buildscripts/errorcodes.py -q --list-files \n ( echo "" > {} )'.format(
+                    timestamp_file))
+        self.builds.append(dict(
+            rule='EXEC',
+            implicit=self.ninja_file,
+            outputs=timestamp_file,
+            variables=dict(
+                command=command,
+                description='Checking error codes',
+                deps='msvc',
+                msvc_deps_prefix='scanning file: ',
+                )))
+
+        # Make this an order_only input to linking stages. This ensures that it happens on every
+        # build but is still allowed to happen in parallel with compilation. This should get it out
+        # of the critical path so that it doesn't actually affect build times, with the downside
+        # that it detects errors later.
+        for build in self.builds:
+            if build['rule'] in ('LINK', 'SHLINK', 'AR'):
+                build.setdefault('order_only', []).append(timestamp_file)
 
     def set_up_ccache(self):
         for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
@@ -808,12 +834,13 @@ class NinjaFile(object):
             [self.globalEnv.WhereIs(tool) for tool in self.tool_paths],
             self.compiler_timestamp_file,
             self.rc_files, # We rely on scons to tell us the deps of windows rc files.
-
-            # Depend on git as position as well. This ensures that error codes are always checked
-            # after rebase.
-            '.git/HEAD',
-            glob.glob('.git/refs/heads/*'),
             ])
+
+        if not self.globalEnv.get('_NINJA_USE_ERRCODE'):
+            # Depend on git as position as well. This ensures that error codes are always checked
+            # after rebase. It is also used for filling in MONGO_VERSION and MONGO_GIT_HASH.
+            deps += flatten(['.git/HEAD', glob.glob('.git/refs/heads/*')])
+
         deps = sorted(set(dep.replace(' ', '\\ ')
                           for dep in deps
                           if dep and os.path.isfile(dep)))
@@ -874,6 +901,18 @@ def configure(conf, env):
     if not env['NINJA']:
         env['NINJA'] = where_is(env, 'ninja-build') # Fedora...
 
+    # This is checking if we have a version of errorcodes.py that supports the --list-files flag
+    # needed to correctly handle the dependencies in ninja. This will be re-run when changing to
+    # an older commit since the .ninja file depends on everything in buildscripts.
+    if hasattr(errorcodes, 'list_files'):
+        if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
+            print "*** WARNING: to get the most out of ninja, pass these flags to scons:"
+            print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
+            print '*** This will run the scons config less often and can make ccache more efficient'
+            print '***'
+        else:
+            env["_NINJA_USE_ERRCODE"] = True
+
     action_str = "Generating $TARGET"
     if env.ToolchainIs('gcc', 'clang'):
         # ninja buffers stdout which causes gcc and clang not to emit color. Force it on and let
@@ -920,11 +959,6 @@ def configure(conf, env):
                 if map(int, version.split('.')) < [3, 2, 3]:
                     print "*** -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
                     Exit(1)
-
-            if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
-                print "*** WARNING: to get the most out of ccache, pass these flags to scons:"
-                print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
-                print '***'
 
         if GetOption('icecream'):
             if not env.TargetOSIs('linux'):
