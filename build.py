@@ -675,7 +675,9 @@ class NinjaFile(object):
                 description='RUN_TEST $in',
                 pool='console') # show live output.
 
-        ninja.rule('EXEC', command='$command')
+        ninja.rule('EXEC',
+                command='$command',
+                pool=local_pool)
         ninja.rule('EXEC_RSP',
                 command='$command',
                 pool=local_pool,
