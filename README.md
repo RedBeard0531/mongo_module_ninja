@@ -10,6 +10,7 @@ your mongodb checkout. You may want to rename it to something short like
 build.ninja. You can now use `ninja` to build anything that scons can.
 
 ```bash
+mkdir -p src/mongo/db/modules
 cd src/mongo/db/modules
 git clone https://github.com/RedBeard0531/mongo_module_ninja ninja
 cd -
