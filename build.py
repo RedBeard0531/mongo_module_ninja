@@ -196,13 +196,14 @@ class NinjaFile(object):
         # important because icecream assumes that same-named environments are identical, but we need
         # to give ninja a fixed name for dependency tracking.
         version_file = 'build/icecc_envs/{}.tar.gz'.format(cc.replace('/', '_'))
-        env_flags = [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
+        env_flags = [
+            'ICECC_VERSION=$$(realpath "%s")' % version_file,
+            'CCACHE_PREFIX=' + self.globalEnv['_NINJA_ICECC'],
+        ]
+        compile_flags = []
 
         if self.globalEnv.ToolchainIs('clang'):
-            env_flags += [
-                'ICECC_CLANG_REMOTE_CPP=1',
-                'CCACHE_PREFIX=' + self.globalEnv['_NINJA_ICECC'],
-            ]
+            env_flags += [ 'ICECC_CLANG_REMOTE_CPP=1' ]
 
             self.builds.append(dict(
                 rule='MAKE_ICECC_ENV',
@@ -218,10 +219,8 @@ class NinjaFile(object):
                     )
                 ))
         else:
-            env_flags += [
-                'REAL_ICECC=' + self.globalEnv['_NINJA_ICECC'],
-                'CCACHE_PREFIX=' + icecc_gcc_wrapper,
-            ]
+            env_flags += [ 'CCACHE_NOCPP2=1' ]
+            compile_flags += [ '-fdirectives-only' ]
 
             self.builds.append(dict(
                 rule='MAKE_ICECC_ENV',
@@ -239,7 +238,8 @@ class NinjaFile(object):
 
         for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
             if rule in self.tool_commands:
-                self.tool_commands[rule] = ' '.join(env_flags + [self.tool_commands[rule]])
+                self.tool_commands[rule] = (
+                        ' '.join(env_flags + [self.tool_commands[rule]] + compile_flags))
 
         for build in self.builds:
             if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
