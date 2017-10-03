@@ -527,6 +527,9 @@ class NinjaFile(object):
             if is_link_model_object:
                 libdep_func = myEnv[myEnv['_LIBDEPS'].strip('${}')]
             else:
+                if not myEnv.has_key('_LIBDEPS_GET_LIBS'):
+                    print("*** Need to use --link-model=object for this version of MongoDB ***")
+                    exit(1)
                 libdep_func = myEnv['_LIBDEPS_GET_LIBS']
             assert callable(libdep_func)
             libdeps = strmap(libdep_func(sources, targets, myEnv, False))
