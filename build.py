@@ -168,7 +168,7 @@ class NinjaFile(object):
             outputs=timestamp_file,
             variables=dict(
                 command=command,
-                description='Checking error codes',
+                description='Checking error codes and waiting for next compile to finish',
                 deps='msvc',
                 msvc_deps_prefix='scanning file: ',
                 )))
