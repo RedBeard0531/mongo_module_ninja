@@ -58,7 +58,6 @@ update_if_changed_script = os.path.join(my_dir, 'update_if_changed.py')
 touch_compiler_timestamps_script = os.path.join(my_dir, 'touch_compiler_timestamps.py')
 
 icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
-icecc_gcc_wrapper = os.path.abspath(os.path.join(my_dir, 'icecream', 'icecc-gcc-wrapper'))
 
 def makeNinjaFile(target, source, env):
     assert not source
