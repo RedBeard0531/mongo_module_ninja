@@ -50,6 +50,7 @@ up with `--help` so they are documented here.
 
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
+| `--abidw` | off | **EXPERIMENTAL** Use [abidw](#abidw-support) to reduce dynamic relinking when the ABI is unchanged |
 | `--icecream` | off | **LINUX ONLY** Use [icecream](#-icecream-support) for distributed compilation |
 | `--link-pool-depth=NNN` | 4 | **WINDOWS ONLY**: limit the number of concurrent link tasks |
 | `--ninja-builddir=path` | current directory | Where ninja stores [its database](https://ninja-build.org/manual.html#ref_log). **Delete your `build/` directory if you change this!** |
@@ -186,6 +187,24 @@ ccache requires an additional pass of the C++ preprocessor. This can become a
 bottleneck limiting the speed that you can submit jobs to the cluster. You can
 set the `CCACHE_DISABLE=1` environment variable when running ninja to speed up
 your builds with the trade-off that it won't cache the compilations.
+
+## ABIDW support
+
+If you add `--abidb` to your scons flags, the build will use
+[abidw](https://sourceware.org/libabigail/manual/abidw.html) from
+[libabigail](https://sourceware.org/libabigail/) to generate ABI signatures for
+dynamic libraries, and use the signatures to decide if downstream libraries and
+executables need to be relinked. This can result in substantially shorter builds
+when editing a single cpp file (unfortunately header changes don't benefit).
+
+You will need a version of `abidw` that supports the `--no-show-locs` flag which
+was added very recently. This means you will probably need to install
+`libabigail` from git rather that using a package. Except on
+[Arch](https://aur.archlinux.org/packages/libabigail-git/).
+
+While we believe this is safe, it hasn't seen much battle testing on our
+code-base. If you suspect an issue, turn this flag off and let me know. Toggling
+this flag should only require a relink, no recompiling.
 
 ### Installing icecream on Ubuntu (and similar distros)
 

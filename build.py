@@ -45,9 +45,16 @@ AddOption('--icecream',
         dest='icecream',
         help='Use the icecream distributed compile server')
 
+AddOption('--abidw',
+        default=False,
+        action='store_true',
+        dest='abidw',
+        help='EXPERIMENTAL Use abidw to reduce dynamic relinking when the ABI is unchanged')
+
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
+update_if_changed_script = os.path.join(my_dir, 'update_if_changed.py')
 touch_compiler_timestamps_script = os.path.join(my_dir, 'touch_compiler_timestamps.py')
 
 icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
@@ -103,6 +110,8 @@ class NinjaFile(object):
         self.add_run_test_builds()
         self.set_up_complier_upgrade_check()
 
+        if GetOption('abidw'):
+            self.set_up_abidw()
         if env.get('_NINJA_USE_ERRCODE'):
             self.add_error_code_check()
         if env.get('_NINJA_CCACHE'):
@@ -156,6 +165,26 @@ class NinjaFile(object):
         for build in self.builds:
             if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
                 build.setdefault('implicit', []).append(self.compiler_timestamp_file)
+
+    def set_up_abidw(self):
+        self.tool_commands['ABIDW'] = ('abidw --no-show-locs $in | md5sum | $PYTHON %s $out'
+                                       % update_if_changed_script)
+
+        shlibsuffix = self.globalEnv['SHLIBSUFFIX']
+        for build in self.builds:
+            if build['rule'] not in ('LINK', 'SHLINK'):
+                continue
+
+            # Generate a lib.abidw signature file for each lib
+            if build['outputs'].endswith(shlibsuffix):
+                self.builds.append(dict(rule='ABIDW',
+                                        inputs=build['outputs'],
+                                        outputs=build['outputs'] + '.abidw'))
+
+            # Replace all lib input edges (to link tasks) with lib.abidw files.
+            for i, f in enumerate(build['implicit']):
+                if f.endswith(shlibsuffix):
+                   build['implicit'][i] = f + '.abidw'
 
     def add_error_code_check(self):
         timestamp_file = os.path.join('build', 'compiler_timestamps', 'error_code_check.timestamp')
@@ -751,6 +780,12 @@ class NinjaFile(object):
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['SHCC']),
                     pool=compile_pool,
                     description = 'SHCC $out')
+            if 'ABIDW' in self.tool_commands:
+                ninja.rule('ABIDW',
+                    command = self.tool_commands['ABIDW'],
+                    pool = local_pool,
+                    restat = 1,
+                    description = 'ABIDW $in')
             if 'SHLINK' in self.tool_commands:
                 command = self.tool_commands['SHLINK']
                 i = command.find('$SHLINK ') + len('$SHLINK')
@@ -767,8 +802,12 @@ class NinjaFile(object):
                 i = command.find('$LINK ') + len('$LINK')
                 prefix = command[:i]
                 args = command[i + 1:]
+                suffix = ''
+                if GetOption('abidw'):
+                    # This hack ensures that we relink binaries when switching between using abidw and not.
+                    suffix = ' # using abidw'
                 ninja.rule('LINK',
-                    command = prefix + ' @$out.rsp',
+                    command = prefix + ' @$out.rsp' + suffix,
                     rspfile = '$out.rsp',
                     rspfile_content = args,
                     pool=local_pool,
@@ -899,6 +938,10 @@ def configure(conf, env):
         print "*** ccache is used automatically if it is installed."
         Exit(1)
 
+    if env.get('ABIDW'):
+        print "*** Use --abidw rather than setting the ABIDW variable"
+        Exit(1)
+
     env['NINJA'] = where_is(env, 'ninja')
     if not env['NINJA']:
         env['NINJA'] = where_is(env, 'ninja-build') # Fedora...
@@ -993,6 +1036,16 @@ def configure(conf, env):
                 # Use icerun so the scheduler knows we are busy. Also helps when multiple developers
                 # are using the same machine.
                 env['_NINJA_ICECC'] = env['_NINJA_ICERUN']
+
+        if GetOption('abidw'):
+            try:
+                subprocess.check_output(['abidw', '--no-show-locs', '/bin/true'],
+                                        stderr=subprocess.STDOUT)
+            except Exception:
+                # Errors checking for updates shouldn't prevent building.
+                print "*** Error running abidw --no-show-locs. This requires a version from the"
+                print "*** libabigail git master branch from at least 2017-11-02."
+                Exit(1)
 
     for ninja_file in ninja_files:
         cmd = env.Command(ninja_file, [], Action(makeNinjaFile, action_str))
