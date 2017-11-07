@@ -337,12 +337,14 @@ class NinjaFile(object):
         # TODO break this function up
 
         if n.executor.post_actions:
-            # We currently use this in exactly one place. For now just handle that case.
+            # We currently only use this to set the executable bits on files, but we do it in
+            # different ways in different places. For now, only support this usage.
             assert len(n.executor.post_actions) == 1
             assert len(n.executor.action_list) == 1
             assert n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action
-            assert str(n.executor.post_actions[0]).startswith('Chmod(')
-            assert 'oug+x' in str(n.executor.post_actions[0])
+            if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
+                assert str(n.executor.post_actions[0]).startswith('Chmod(')
+                assert 'oug+x' in str(n.executor.post_actions[0])
             n.executor.post_actions = []
             do_chmod = True
         else:
