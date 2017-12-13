@@ -425,7 +425,8 @@ class NinjaFile(object):
 
             # Strip out the functions from shared library builds.
             if '$SHLINK' in str(n.executor):
-                assert len(lines) == 3
+                # Linux or Windows
+                assert len(lines) == 3 or len(lines) == 5
 
                 # Run the check now. It doesn't need to happen at runtime.
                 assert lines[0] == 'SharedFlagChecker(target, source, env)'
@@ -433,9 +434,13 @@ class NinjaFile(object):
 
                 # We don't need this right now, so just assert that we don't. It can be added if we
                 # ever need it.
-                assert lines[2] == 'LibSymlinksActionFunction(target, source, env)'
+                assert lines[2] == 'LibSymlinksActionFunction(target, source, env)' or \
+                    lines[4] == 'LibSymlinksActionFunction(target, source, env)'
                 for target in targets:
                     assert not getattr(getattr(targets[0],'attributes', None), 'shliblinks', None)
+
+                # TODO: Windows - remove .def from from sources
+                # and extend _LIBFLAGS with /def:
 
                 # Now just make it the "real" action.
                 n.executor.set_action_list(action.list[1])
@@ -513,6 +518,8 @@ class NinjaFile(object):
                                                .replace('$TARGET','$out')
                                                .replace('$CHANGED_SOURCES', '$in')
                                                .replace('$SOURCES.windows', '$in')
+                                               .replace('$_SHLINK_TARGETS', '$out')
+                                               .replace('$_SHLINK_SOURCES', '$in')
                                                .replace('$SOURCES','$in'))
         assert 'TARGET' not in cmd
         assert 'SOURCE' not in cmd
@@ -782,14 +789,16 @@ class NinjaFile(object):
                     pool=local_pool,
                     description = 'STATICLIB $out')
         else:
-            for tool in self.tool_commands:
-                assert not tool.startswith('SH')
-
             if 'CXX' in self.tool_commands:
                 ninja.rule('CXX',
                     deps = 'msvc',
                     command = '%s /showIncludes'%(self.tool_commands['CXX']),
                     description = 'CXX $out')
+            if 'SHCXX' in self.tool_commands:
+                ninja.rule('SHCXX',
+                    deps = 'msvc',
+                    command = '%s /showIncludes'%(self.tool_commands['SHCXX']),
+                    description = 'SHCXX $out')
             if 'CC' in self.tool_commands:
                 ninja.rule('CC',
                     deps = 'msvc',
@@ -811,6 +820,16 @@ class NinjaFile(object):
                     rspfile_content = self.tool_commands['LINK'].replace('$LINK ', ''),
                     pool='winlink',
                     description = 'LINK $out')
+            if 'SHLINK' in self.tool_commands:
+                if 'LINK' not in self.tool_commands:
+                    ninja.pool('winlink', GetOption('link-pool-depth'))
+    
+                ninja.rule('SHLINK',
+                    command = 'cmd /c $PYTHON %s $out.rsp && $SHLINK @$out.rsp'%split_lines_script,
+                    rspfile = '$out.rsp',
+                    rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', ''),
+                    pool='winlink',
+                    description = 'SHLINK $out')
 
 
     def write_builds(self, ninja):
