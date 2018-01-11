@@ -65,6 +65,11 @@ up with `--help` so they are documented here.
    the `\`s from your command line.
 1. If scons is prompting for your password, try checking out this module with
    the `https://` url used above rather than a `git@github.com` url.
+1. If running ninja errors with a message like
+   `die: error: unable to read configuration file` your distro probably uses a
+   different package named `ninja`. Try uninstalling that and installing the
+   package named `ninja-build`. Also re-read the last paragraph of the
+   introduction section.
 1. If any of your debugging tools behave oddly, read the section about split
    DWARF info below and consider removing `-gsplit-dwarf` from your CCFLAGS.
 1. If ccache doesn't seem to be working, run `CCACHE_LOGFILE=/tmp/ccache.log
