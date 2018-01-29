@@ -885,7 +885,7 @@ class NinjaFile(object):
 
 def configure(conf, env):
     if not COMMAND_LINE_TARGETS:
-        print "*** To prevent PEBKACs, the ninja module requires that you pass a target to scons."
+        print "*** ERROR: To prevent PEBKACs, the ninja module requires that you pass a target to scons."
         print "*** You probably forgot to include build.ninja on the command line"
         print "***"
         print "*** If you really want to build mongod using scons, do so explicitly or pass the"
@@ -916,7 +916,7 @@ def configure(conf, env):
         print '***'
 
     if GetOption('cache'):
-        print "*** Remove --cache flags to make ninja generation work."
+        print "*** ERROR: Remove --cache flags to make ninja generation work."
         print "*** ccache is used automatically if it is installed."
         Exit(1)
 
@@ -946,7 +946,7 @@ def configure(conf, env):
                                 for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS'))
 
         if using_gsplitdwarf and not env.TargetOSIs('linux'):
-            print "*** -gsplit-dwarf is only supported on Linux."
+            print "*** ERROR: -gsplit-dwarf is only supported on Linux."
             Exit(1)
 
         if GetOption('cache_disable'):
@@ -969,7 +969,7 @@ def configure(conf, env):
             if 'run_second_cpp = false' in settings:
                 # This defaults to true in new versions. Our codebase generates spurious warnings
                 # when it is false because the compiler can't see what is part of a macro expansion.
-                print '*** Change the ccache run_second_cpp flag to true by running:'
+                print '*** ERROR: Change the ccache run_second_cpp flag to true by running:'
                 print '*** ccache -o run_second_cpp=true'
                 print '***'
                 Exit(1)
@@ -980,30 +980,30 @@ def configure(conf, env):
                                      .split()[-1]
                                      .split('+')[0])
                 if map(int, version.split('.')) < [3, 2, 3]:
-                    print "*** -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
+                    print "*** ERROR: -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
                     Exit(1)
 
         if GetOption('icecream'):
             if not env.TargetOSIs('linux'):
-                print 'icecream is currently only supported on linux'
+                print 'ERROR: icecream is currently only supported on linux'
                 Exit(1)
             if not env['_NINJA_CCACHE']:
-                print 'icecream currently requires ccache'
+                print 'ERROR: icecream currently requires ccache'
                 Exit(1)
 
             env['_NINJA_ICECC'] = where_is(env, 'icecc')
             if not env['_NINJA_ICECC']:
-                print "Can't find icecc."
+                print "ERROR: Can't find icecc."
                 Exit(1)
 
             env['_NINJA_ICERUN'] = where_is(env, 'icerun')
             if not env['_NINJA_ICERUN']:
-                print "Can't find icerun."
+                print "ERROR: Can't find icerun."
                 Exit(1)
 
             version = subprocess.check_output([env['_NINJA_ICECC'], '--version']).split()[1]
             if version < '1.1rc2' and version != '1.1' and version < '1.2':
-                print "This requires icecc >= 1.1rc2, but you have " + version
+                print "ERROR: This requires icecc >= 1.1rc2, but you have " + version
                 Exit(1)
 
             if any(flag.startswith('-fsanitize-blacklist') for flag in env['CCFLAGS']):
