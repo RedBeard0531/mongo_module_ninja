@@ -374,7 +374,8 @@ class NinjaFile(object):
                 ))
             return
 
-        if len(targets) == 1 and str(targets[0]).endswith('tests.txt'):
+        if len(targets) == 1 and any(str(targets[0]).endswith(suffix)
+                                     for suffix in ['tests.txt', 'benchmarks.txt']):
             if len(sources) == 1:
                 assert isinstance(sources[0], SCons.Node.Python.Value)
                 tests = sources[0].value
