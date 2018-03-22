@@ -88,6 +88,12 @@ the "basename" of the test, so `build/ninja/mongo/bson/bson_obj_test` is just
 tests. To run all of the unittests, continue to use something like `ninja
 unittests && buildscripts/resmoke.py --suites=unittests -j16`.
 
+This also works with micro-benchmarks (eg `ninja +future_bm`), but only run them
+**by themselves** not with anything else. For example, don't build another
+target (`ninja +future_bm mongod`), or even multiple benchmarks at once
+(`ninja +future_bm +clock_source_bm`). You want your system as close to idle as
+possible when testing performance.
+
 ## ccache support
 
 If you have `ccache` installed and on your path, it will be used automatically.
