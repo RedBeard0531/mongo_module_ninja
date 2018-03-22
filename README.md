@@ -192,12 +192,12 @@ disabling the icecream daemon when doing benchmarking. Depending on your
 distribution, this is either `systemctl stop icecream` or `systemctl stop
 iceccd`. You will want to restart the daemon before compiling again.
 
-Until [this issue](https://github.com/ccache/ccache/issues/185) is resolved,
-ccache requires an additional pass of the C++ preprocessor when using clang (but
-not gcc). This can become a bottleneck limiting the speed that you can submit
-jobs to the cluster. You can set the `CCACHE_DISABLE=1` environment variable
-when running ninja to speed up your builds with the trade-off that it won't
-cache the compilations.
+Due to [this issue](https://github.com/ccache/ccache/issues/185), ccache older
+than 3.4 requires an additional pass of the C++ preprocessor when using clang
+(but not gcc). This can become a bottleneck limiting the speed that you can
+submit jobs to the cluster. You can set the `CCACHE_DISABLE=1` environment
+variable when running ninja to speed up your builds with the trade-off that it
+won't cache the compilations. Or just upgrade to a newer ccache.
 
 ### Installing icecream on Ubuntu (and similar distros)
 

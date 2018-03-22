@@ -209,7 +209,12 @@ class NinjaFile(object):
         compile_flags = []
 
         if self.globalEnv.ToolchainIs('clang'):
-            env_flags += [ 'ICECC_CLANG_REMOTE_CPP=1' ]
+            if self.globalEnv['_NINJA_CCACHE_VERSION'] >= [3, 4, 1]:
+                # This needs the fix for https://github.com/ccache/ccache/issues/185 to work.
+                env_flags += [ 'CCACHE_NOCPP2=1' ]
+                compile_flags += [ '-frewrite-includes' ]
+            else:
+                env_flags += [ 'ICECC_CLANG_REMOTE_CPP=1' ]
 
             self.builds.append(dict(
                 rule='MAKE_ICECC_ENV',
@@ -981,12 +986,14 @@ def configure(conf, env):
                 print '***'
                 Exit(1)
 
+            ccache_version_raw = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
+                                            .split('\n', 1)[0]
+                                            .split()[-1]
+                                            .split('+')[0])
+            env['_NINJA_CCACHE_VERSION'] = map(int, ccache_version_raw.split('.'))
+
             if using_gsplitdwarf:
-                version = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
-                                     .split('\n', 1)[0]
-                                     .split()[-1]
-                                     .split('+')[0])
-                if map(int, version.split('.')) < [3, 2, 3]:
+                if env['_NINJA_CCACHE_VERSION']  < [3, 2, 3]:
                     print "*** ERROR: -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
                     Exit(1)
 
