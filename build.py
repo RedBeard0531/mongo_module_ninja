@@ -939,6 +939,11 @@ def configure(conf, env):
         print "*** ccache is used automatically if it is installed."
         Exit(1)
 
+    if 'ICECC' in env:
+        print "*** ERROR: Remove ICECC= flags to make ninja generation work."
+        print "*** Use --icecream instead."
+        Exit(1)
+
     env['NINJA'] = where_is(env, 'ninja')
     if not env['NINJA']:
         env['NINJA'] = where_is(env, 'ninja-build') # Fedora...
