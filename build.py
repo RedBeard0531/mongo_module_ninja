@@ -297,7 +297,14 @@ class NinjaFile(object):
             # We see each build task once per target, but we handle all targets the first time.
             if id(n.executor) not in seen:
                 seen.add(id(n.executor))
-                self.handle_build_node(n)
+                try:
+                    self.handle_build_node(n)
+                except:
+                    print
+                    print "Failed on node:", n
+                    print "Command:", n.executor
+                    print
+                    raise
 
         for build in self.builds:
             # Make everything build by scons depend on the ninja file. This makes them transitively
