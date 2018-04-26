@@ -869,6 +869,7 @@ class NinjaFile(object):
         deps = flatten([
             'SConstruct',
             rglob('SConscript', 'src'),
+            rglob('*.py', os.path.expanduser('~/.scons/')),
             rglob('*.py', 'site_scons'),
             rglob('*.py', 'buildscripts'),
             rglob('*.py', 'src/third_party/scons-2.5.0'),
