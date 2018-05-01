@@ -940,8 +940,8 @@ def configure(conf, env):
         print "*** ccache is used automatically if it is installed."
         Exit(1)
 
-    if 'ICECC' in env:
-        print "*** ERROR: Remove ICECC= flags to make ninja generation work."
+    if env.get('ICECC'): # flexible to support both missing and set to ''
+        print "*** ERROR: Remove ICECC=icecc flag or set to '' to make ninja generation work."
         print "*** Use --icecream instead."
         Exit(1)
 
