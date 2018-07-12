@@ -64,6 +64,8 @@ subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
 touch_compiler_timestamps_script = os.path.join(my_dir, 'touch_compiler_timestamps.py')
 
+verify_icecream_script = os.path.join(my_dir, 'darwin', 'verify_icecream.py')
+
 icecc_create_env = os.path.join(my_dir, 'icecream', 'icecc-create-env')
 
 def makeNinjaFile(target, source, env):
@@ -122,6 +124,8 @@ class NinjaFile(object):
         if env.get('_NINJA_CCACHE'):
             self.set_up_ccache()
         if env.get('_NINJA_ICECC'):
+            if env.TargetOSIs('darwin'):
+                self.add_icecream_check()
             self.set_up_icecc()
 
         if GetOption('pch'):
@@ -301,6 +305,32 @@ class NinjaFile(object):
             if build['rule'] in ('LINK', 'SHLINK', 'AR'):
                 build.setdefault('order_only', []).append(timestamp_file)
 
+    def add_icecream_check(self):
+        # Run the verification script now to warn the user if icecream is running
+        subprocess.check_call([sys.executable, verify_icecream_script])
+
+        timestamp_file = os.path.join('build', 'compiler_timestamps', 'icecream_check.timestamp')
+        command = self.make_command( '$PYTHON {} \n ( echo "" > {} )'.format(
+            verify_icecream_script,
+            timestamp_file))
+        self.builds.append(dict(
+            rule='EXEC',
+            implicit=self.ninja_file,
+            outputs=timestamp_file,
+            variables=dict(
+                command=command,
+                description='Checking for a proper icecream setup',
+                deps='msvc',
+                msvc_deps_prefix='scanning file: ',
+                )))
+
+        # Do this before trying to compile since it is very quick and we want to alert if we are in
+        # a bad state.
+        for build in self.builds:
+            if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+                build.setdefault('order_only', []).append(timestamp_file)
+
+
     def set_up_ccache(self):
         for rule in ('CC', 'CXX', 'SHCC', 'SHCXX'):
             if rule in self.tool_commands:
@@ -317,7 +347,6 @@ class NinjaFile(object):
         # to give ninja a fixed name for dependency tracking.
         version_file = 'build/icecc_envs/{}.tar.gz'.format(cc.replace('/', '_'))
         env_flags = [
-            'ICECC_VERSION=$$(realpath "%s")' % version_file,
             'CCACHE_PREFIX=' + self.globalEnv['_NINJA_ICECC'],
         ]
         compile_flags = []
@@ -329,20 +358,31 @@ class NinjaFile(object):
                 env_flags += [ 'CCACHE_NOCPP2=1' ]
                 compile_flags += [ '-frewrite-includes' ]
 
-            self.builds.append(dict(
-                rule='MAKE_ICECC_ENV',
-                inputs=icecc_create_env,
-                outputs=version_file,
-                implicit=[cc, self.compiler_timestamp_file],
-                variables=dict(
-                    cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} {out}'.format(
-                        icecc_create_env=icecc_create_env,
-                        clang=os.path.realpath(cc),
-                        compiler_wrapper='/bin/true', # we require a new enough iceccd.
-                        out=version_file),
-                    )
-                ))
+            if self.globalEnv.TargetOSIs("darwin"):
+                #TODO make this not hard coded.
+                version_file = 'build/068d6674432389b2ebd816aaa622d614.tar.gz'
+                if not os.path.exists(version_file):
+                    #TODO download automatically rather than erroring
+                    print("*** ERROR: Missing clang toolchain tarball at '%s'." % (version_file))
+                    Exit(1)
+                env_flags += [ 'ICECC_VERSION=x86_64:%s' % version_file ]
+            else:
+                env_flags += [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
+                self.builds.append(dict(
+                    rule='MAKE_ICECC_ENV',
+                    inputs=icecc_create_env,
+                    outputs=version_file,
+                    implicit=[cc, self.compiler_timestamp_file],
+                    variables=dict(
+                        cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} {out}'.format(
+                            icecc_create_env=icecc_create_env,
+                            clang=os.path.realpath(cc),
+                            compiler_wrapper='/bin/true', # we require a new enough iceccd.
+                            out=version_file),
+                        )
+                    ))
         else:
+            env_flags += [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
             env_flags += [ 'CCACHE_NOCPP2=1' ]
             compile_flags += [ '-fdirectives-only' ]
 
@@ -1250,8 +1290,8 @@ def configure(conf, env):
             if GetOption('pch'):
                 print('*** ERROR: icecream is not supported with pch')
                 Exit(1)
-            if not env.TargetOSIs('linux'):
-                print('*** ERROR: icecream is currently only supported on linux')
+            if not env.TargetOSIs('linux', 'darwin'):
+                print('ERROR: icecream is currently only supported on linux and darwin')
                 Exit(1)
             if not env['_NINJA_CCACHE']:
                 print('*** ERROR: icecream currently requires ccache')
