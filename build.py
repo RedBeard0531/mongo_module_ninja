@@ -209,12 +209,11 @@ class NinjaFile(object):
         compile_flags = []
 
         if self.globalEnv.ToolchainIs('clang'):
+            env_flags += [ 'ICECC_CLANG_REMOTE_CPP=1' ]
             if self.globalEnv['_NINJA_CCACHE_VERSION'] >= [3, 4, 1]:
                 # This needs the fix for https://github.com/ccache/ccache/issues/185 to work.
                 env_flags += [ 'CCACHE_NOCPP2=1' ]
                 compile_flags += [ '-frewrite-includes' ]
-            else:
-                env_flags += [ 'ICECC_CLANG_REMOTE_CPP=1' ]
 
             self.builds.append(dict(
                 rule='MAKE_ICECC_ENV',
