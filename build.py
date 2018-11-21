@@ -618,7 +618,7 @@ class NinjaFile(object):
             outputs=targets[0],
             implicit_outputs=targets[1:],
             inputs=strmap(sources),
-            implicit=implicit_deps + libdeps + toolPath,
+            implicit=implicit_deps + libdeps + [toolPath],
             order_only=['_generated_headers']
                        if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
                        else [],
