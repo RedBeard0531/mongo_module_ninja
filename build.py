@@ -610,12 +610,15 @@ class NinjaFile(object):
         # I don't think the tradeoff is worth it.
         # For more details see: https://github.com/ninja-build/ninja/issues/1184
         targets = [t for t in strmap(targets) if not t.endswith('.dwo')]
+        toolPath = myEnv.WhereIs('$'+tool)
+        assert toolPath is not None, 'Unable to find the location of tool \'%s\'' % tool
+
         self.builds.append(dict(
             rule=tool,
             outputs=targets[0],
             implicit_outputs=targets[1:],
             inputs=strmap(sources),
-            implicit=implicit_deps + libdeps + [myEnv.WhereIs('$'+tool)],
+            implicit=implicit_deps + libdeps + toolPath,
             order_only=['_generated_headers']
                        if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
                        else [],
