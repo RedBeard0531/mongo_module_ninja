@@ -76,7 +76,7 @@ def where_is(env, exe):
             path = '/usr/lib/icecream/bin/'+exe
 
     # Normalize missing to '' rather than None
-    return path if path else ''
+    return ('"' + path + '"') if path else ''
 
 def strmap(list):
     for node in list:
