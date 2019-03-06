@@ -97,6 +97,7 @@ class NinjaFile(object):
         self.generated_headers = set()
         self.rc_files = []
 
+        self.init_idl_dependencies()
         self.find_build_nodes()
         self.find_aliases()
         self.add_run_test_builds()
@@ -117,6 +118,13 @@ class NinjaFile(object):
 
         assert 'PYTHON' not in self.vars
         self.vars['PYTHON'] = self.globalEnv.WhereIs('$PYTHON')
+
+    def init_idl_dependencies(self):
+        # The IDL files depend on the python scripts so get a list of IDL related python files.
+        # This is done by idl_tool.py but we need to duplicate the logic since we do not run
+        # the scanner. We get the list once and cache it.
+        self.idl_deps = glob.glob('buildscripts/idl/*.py')
+        self.idl_deps.extend(glob.glob('buildscripts/idl/idl/*.py'))
 
     def add_run_test_builds(self):
         # For everything that gets installed to build/unittests, add a rule for +basename
@@ -515,8 +523,54 @@ class NinjaFile(object):
             return
 
         tool = str(n.executor).split(None, 1)[0]
-        if tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
-            n.scan() # We need this for IDL.
+        if tool == '$IDLC' and myEnv.get('IDL_HAS_INLINE_DEPENDENCIES'):
+            if n.implicit:
+                implicit_deps += strmap(n.implicit)
+
+            # Important:
+            # Originally we ran the IDL scanner during build.ninja file generation but this is
+            # single-thread and slow as the number of IDL files has grown to greater then 100.
+            # Now, we let IDL tell Ninja its dependencies. Unfortunately, IDL does not have a good
+            # way to this with its implicit dependency caching and multiple outputs due to a
+            # limitation in ninja.
+            # See https://github.com/ninja-build/ninja/pull/1534
+            #
+            # Instead we split IDL file generation into "two" phases:
+            # 1. Generate the header and the cpp file as normal but only tell Ninja about the header
+            # 2. "Generate" the cpp file by telling Ninja it depends on the header file via a
+            #    phony rule
+            #
+            idl_cpp_file = strmap(targets)[0]
+            idl_header_file = strmap(targets)[1]
+
+            # Append --write-dependencies-inline so that IDL generates a list of dependencies when
+            # it runs
+            idl_command = self.make_command(myEnv.subst(str(n.executor), executor=n.executor) \
+                + " --write-dependencies-inline")
+
+            implicit_deps.append("_generated_idl")
+
+            # Lie to Ninja by saying it only generates a header
+            self.builds.append(dict(
+                rule='EXEC',
+                outputs=[idl_header_file],
+                inputs=strmap(sources),
+                implicit=implicit_deps,
+                variables={
+                    'command' : idl_command,
+                    'deps' : 'msvc',
+                    'msvc_deps_prefix' : 'import file:',
+                    }
+                ))
+
+            # Tell Ninja the cpp file is "generated" from the header file
+            self.builds.append(dict(
+                rule='phony',
+                outputs=[ idl_cpp_file ],
+                inputs=[ idl_header_file ],
+                ))
+            return
+        elif tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
             implicit_deps += strmap(n.implicit)
             self.builds.append(dict(
                 rule='EXEC',
@@ -845,7 +899,6 @@ class NinjaFile(object):
             if 'SHLINK' in self.tool_commands:
                 if 'LINK' not in self.tool_commands:
                     ninja.pool('winlink', GetOption('link-pool-depth'))
-    
                 ninja.rule('SHLINK',
                     command = 'cmd /c $PYTHON %s $out.rsp && $SHLINK @$out.rsp'%split_lines_script,
                     rspfile = '$out.rsp',
@@ -865,6 +918,7 @@ class NinjaFile(object):
 
         ninja.newline()
         ninja.build('_generated_headers', 'phony', sorted(self.generated_headers))
+        ninja.build('_generated_idl', 'phony', sorted(self.idl_deps))
         ninja.build('_ALWAYS_BUILD', 'phony')
 
     def write_regenerator(self, ninja):
