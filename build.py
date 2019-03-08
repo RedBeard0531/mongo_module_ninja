@@ -571,6 +571,7 @@ class NinjaFile(object):
                 ))
             return
         elif tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
+            n.scan() # We need this for IDL.
             implicit_deps += strmap(n.implicit)
             self.builds.append(dict(
                 rule='EXEC',
