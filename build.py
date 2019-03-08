@@ -15,6 +15,11 @@ import multiprocessing
 from buildscripts import errorcodes
 
 my_dir = os.path.dirname(__file__)
+def ospath(file):
+    return file.replace('/',os.path.sep)
+
+def sibling(*file):
+    return os.path.normpath(os.path.join(my_dir, *file))
 
 try:
     import ninja_syntax
@@ -44,6 +49,12 @@ AddOption('--icecream',
         action='store_true',
         dest='icecream',
         help='Use the icecream distributed compile server')
+
+AddOption('--pch',
+        default=False,
+        action='store_true',
+        dest='pch',
+        help='Use a PCH file, incompatible with icrecream')
 
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
@@ -110,6 +121,9 @@ class NinjaFile(object):
         if env.get('_NINJA_ICECC'):
             self.set_up_icecc()
 
+        if GetOption('pch'):
+            self.enable_pch()
+
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
             self.vars['COPY'] = 'cmd /c copy'
@@ -125,6 +139,90 @@ class NinjaFile(object):
         # the scanner. We get the list once and cache it.
         self.idl_deps = glob.glob('buildscripts/idl/*.py')
         self.idl_deps.extend(glob.glob('buildscripts/idl/idl/*.py'))
+
+    def enable_pch(self):
+        using_ccache = bool(self.globalEnv.get('_NINJA_CCACHE', ''))
+        if using_ccache:
+            # CCache is not supported - https://github.com/ccache/ccache/pull/160
+            print 'ccache is not supported with pch, you must pass --no-cache'
+            Exit(1)
+
+        pch_dir = ospath('build/%s/mongo/'%self.globalEnv.subst('$VARIANT_DIR'))
+        # Prefer CXX on MSVC since MSVC always has a SHCXX due to the MSI custom action dll.
+        pch_tool = 'SHCXX' if 'SHCXX' in self.tool_commands and not self.globalEnv.ToolchainIs('msvc') else 'CXX'
+        pchvars = {}
+
+        for build in self.builds:
+            if build['rule'] == pch_tool:
+                if build['inputs'][0].startswith(ospath('src/mongo')):
+                    if build['inputs'][0] == ospath('src/mongo/bson/bsonobj.cpp'):
+                        # HACK: this happens to be a good file to base the pch flags off of.
+                        pchvars = dict(**build['variables'])
+
+                    if using_ccache:
+                        # TODO look into ccache's sloppiness=pch_defines setting and see if it is
+                        # safe for our uses. For now disable ccache on files using pch since ccache
+                        # will refuse to cache them anyway.
+                        build['variables']['CCACHE'] = ''
+
+                    pch_file = 'test-pch.h' if 'test' in build['inputs'][0] else 'pch.h'
+                    if not self.globalEnv.ToolchainIs('msvc'):
+                        # -include uses path to file
+                        build['variables']['pch_flags'] = '-include ' + pch_dir + pch_file
+                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.$pch_suffix')
+                    else:
+                        # /FI and friends use the same rules as #include
+                        build['variables']['pch_flags'] = (
+                                '/Fp{0}{1}.$pch_suffix /Yumongo/{1} /FImongo/{1}'
+                                    .format(pch_dir, pch_file))
+                        # Ninja only knows about the .obj file and uses that, not the .pch file, to
+                        # track header dependencies. This works around the ninja limitation that
+                        # rules using 'deps' can't have builds with multiple outputs.
+                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.obj')
+
+            elif build['rule'] == 'LINK' and self.globalEnv.ToolchainIs('msvc'):
+                build.setdefault('inputs', []).extend([pch_dir+'pch.h.obj',
+                                                    pch_dir+'test-pch.h.obj'])
+
+        self.vars['pch_flags'] = ''
+        self.vars['pch_suffix'] = 'gch' if self.globalEnv.ToolchainIs('gcc') else 'pch'
+
+        if not self.globalEnv.ToolchainIs('msvc'):
+            # position matters on non-msvc compilers
+            self.tool_commands[pch_tool] = self.tool_commands[pch_tool].replace('$out', '$out $pch_flags')
+            pchvars['pch_flags']= '-x c++-header'
+        else:
+            self.tool_commands[pch_tool] += ' $pch_flags'
+
+        for pch_file in ('pch.h', 'test-pch.h'):
+            # Copy the pch headers to the build dir so the compiled pch is there rather than in the
+            # source tree. They need to be in the same directory.
+            self.builds.append(dict(
+                rule='INSTALL',
+                inputs=sibling(pch_file),
+                outputs=pch_dir + pch_file))
+
+            if not self.globalEnv.ToolchainIs('msvc'):
+                self.builds.append(dict(
+                    rule=pch_tool,
+                    inputs=pch_dir + pch_file,
+                    outputs=pch_dir + pch_file + '.$pch_suffix',
+                    order_only='_generated_headers',
+                    variables=pchvars,
+                    ))
+            else:
+                pchvars['_MSVC_OUTPUT_FLAG'] = '/Fo%s%s.obj'%(pch_dir, pch_file)
+                pchvars['pch_flags'] = '/Fp{0} /Yc{1} /FI{1}'.format(pch_dir + pch_file + '.pch',
+                                                                'mongo/' + pch_file)
+                self.builds.append(dict(
+                    rule=pch_tool,
+                    inputs=pch_dir + pch_file,
+                    outputs=pch_dir + pch_file + '.obj',
+                    order_only='_generated_headers',
+                    variables=dict(pchvars), # copy it
+                    # can't have multiple outputs.
+                    #implicit_outputs=pch_dir + pch_file + '.pch',
+                    ))
 
     def add_run_test_builds(self):
         # For everything that gets installed to build/unittests, add a rule for +basename
@@ -142,6 +240,7 @@ class NinjaFile(object):
                  and is_test_like(flatten(build['outputs'])[0])]
         self.builds += [dict(outputs='+'+os.path.basename(test), inputs=test, rule='RUN_TEST')
                         for test in tests]
+
     def set_up_complier_upgrade_check(self):
         # This is based on a suggestion from the ninja mailing list. It creates two files, a
         # then_file with the mtime of the compiler and a now_file with an mtime of the last time
@@ -1097,6 +1196,12 @@ def configure(conf, env):
                 # Use icerun so the scheduler knows we are busy. Also helps when multiple developers
                 # are using the same machine.
                 env['_NINJA_ICECC'] = env['_NINJA_ICERUN']
+
+        if GetOption('pch'):
+            if GetOption('icecream'):
+                print 'icecream is not supported with pch'
+                Exit(1)
+
 
     for ninja_file in ninja_files:
         cmd = env.Command(ninja_file, [], Action(makeNinjaFile, action_str))
