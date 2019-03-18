@@ -2,8 +2,6 @@
 
 This is a module for mongodb that makes scons generate build.ninja files.
 
-**☠️ WARNING: This is still experimental. Use at your own risk. ☠️**
-
 To use it, check out this repo into the `src/mongo/db/modules` directory in
 your mongodb checkout. You may want to rename it to something short like
 `ninja`.  Then run `scons` with your favorite flags and have it build
@@ -18,9 +16,9 @@ cd -
 # On non-linux, remove -gsplit-dwarf.
 # Also, be sure to read the section about split DWARF below.
 python buildscripts/scons.py CC=clang CXX=clang++ \
-    CCFLAGS='-Wa,--compress-debug-sections -gsplit-dwarf' \
+    VARIANT_DIR=ninja CCFLAGS='-gsplit-dwarf' \
     MONGO_VERSION='0.0.0' MONGO_GIT_HASH='unknown' \
-    VARIANT_DIR=ninja --modules=ninja \
+    --link-model=dynamic \
     build.ninja
 
 export NINJA_STATUS='[%f/%t (%p) %es] ' # make the ninja output even nicer
@@ -51,6 +49,7 @@ up with `--help` so they are documented here.
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
 | `--icecream` | off | **LINUX ONLY** Use [icecream](#-icecream-support) for distributed compilation |
+| `--pch` | off | Use pre-compiled headers to speed up local compilation. Incompatible with icecream and ccache. Mostly useful on Windows.
 | `--link-pool-depth=NNN` | 4 | **WINDOWS ONLY**: limit the number of concurrent link tasks |
 | `--ninja-builddir=path` | current directory | Where ninja stores [its database](https://ninja-build.org/manual.html#ref_log). **Delete your `build/` directory if you change this!** |
 

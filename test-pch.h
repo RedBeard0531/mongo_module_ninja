@@ -3,6 +3,5 @@
 #include <memory>
 #include <string>
 
-#include "mongo/db/jsobj.h"
-#include "mongo/stdx/functional.h"
+#include "mongo/db/operation_context.h"
 #include "mongo/unittest/unittest.h"
