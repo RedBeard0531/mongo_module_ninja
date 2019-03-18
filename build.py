@@ -548,7 +548,7 @@ class NinjaFile(object):
             idl_command = self.make_command(myEnv.subst(str(n.executor), executor=n.executor) \
                 + " --write-dependencies-inline")
 
-            implicit_deps.append("_generated_idl")
+            implicit_deps.extend(self.idl_deps)
 
             # Lie to Ninja by saying it only generates a header
             self.builds.append(dict(
@@ -919,7 +919,6 @@ class NinjaFile(object):
 
         ninja.newline()
         ninja.build('_generated_headers', 'phony', sorted(self.generated_headers))
-        ninja.build('_generated_idl', 'phony', sorted(self.idl_deps))
         ninja.build('_ALWAYS_BUILD', 'phony')
 
     def write_regenerator(self, ninja):
