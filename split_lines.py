@@ -4,7 +4,7 @@ import shlex
 import sys
 
 if len(sys.argv) != 2:
-    print sys.argv[0] + ': rsp_file'
+    print(sys.argv[0] + ': rsp_file')
     sys.exit(1)
 
 with open(sys.argv[1]) as f:

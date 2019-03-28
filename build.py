@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import SCons
 from SCons.Script import *
 from SCons.Util import flatten
@@ -13,6 +15,7 @@ import fnmatch
 import subprocess
 import multiprocessing
 from buildscripts import errorcodes
+
 
 my_dir = os.path.dirname(__file__)
 def ospath(file):
@@ -89,10 +92,10 @@ def where_is(env, exe):
     # Normalize missing to '' rather than None
     return path if path else ''
 
-def strmap(list):
-    for node in list:
+def strmap(node_list):
+    for node in node_list:
         assert isinstance(node, (str, SCons.Node.FS.Base, SCons.Node.Alias.Alias))
-    return map(str, list)
+    return [str(node) for node in node_list]
 
 class NinjaFile(object):
     def __init__(self, name, env):
@@ -395,7 +398,10 @@ class NinjaFile(object):
 
     def find_build_nodes(self):
         seen = set()
-        for n in self.globalEnv.fs.Top.root._lookupDict.values():
+        # Convert this to a list because SCons is still changing this
+        # dict when we start iterating which causes python to raise an
+        # exception
+        for n in list(self.globalEnv.fs.Top.root._lookupDict.values()):
             if not SCons.Node.is_derived_node(n): continue
             if isinstance(n, SCons.Node.FS.Dir): continue
             if str(n.executor).startswith('write_uuid_to_file('): continue
@@ -408,10 +414,10 @@ class NinjaFile(object):
                 try:
                     self.handle_build_node(n)
                 except:
-                    print
-                    print "Failed on node:", n
-                    print "Command:", n.executor
-                    print
+                    print()
+                    print("Failed on node:", n)
+                    print("Command:", n.executor)
+                    print()
                     raise
 
         for build in self.builds:
@@ -614,7 +620,7 @@ class NinjaFile(object):
         needs_scons = (isinstance(n.executor.get_action_list()[0], SCons.Action.FunctionAction)
                        or '(' in str(n.executor))
         if needs_scons:
-            sources = filter(lambda s: not isinstance(s, SCons.Node.Python.Value), sources)
+            sources = [s for s in sources if not isinstance(s, SCons.Node.Python.Value)]
             self.builds.append(dict(
                 rule='SCONS',
                 outputs=strmap(targets),
@@ -785,7 +791,7 @@ class NinjaFile(object):
     def write(self):
         # Defer touching the actual .ninja file until we are done building the contents to minimize
         # the window where the file isn't complete.
-        content = io.BytesIO()
+        content = io.StringIO() if sys.version_info >= (3,) else io.BytesIO()
 
         # make ninja file directly executable. (bit set later)
         # can't use ninja.comment() because it adds a space after the !
@@ -804,14 +810,14 @@ class NinjaFile(object):
         for default in sorted(strmap(DEFAULT_TARGETS)):
             ninja.default(default)
 
-        # Tell vim not to break up long lines.
+        # Tell vim and emacs not to break up long lines.
         ninja.newline()
         ninja.comment('vim: set textwidth=0 :')
-
-        with open(self.ninja_file, 'w') as file:
-            file.write(content.getvalue())
+        ninja.comment('-*- eval: (auto-fill-mode -1) -*-')
+        with open(self.ninja_file, 'w') as f:
+            f.write(content.getvalue())
         if self.globalEnv['NINJA'] and not self.globalEnv.TargetOSIs('windows'):
-            os.chmod(self.ninja_file, 0755)
+            os.chmod(self.ninja_file, 0o755)
 
     def write_vars(self, ninja):
         # We can probably drop this to 1.5, but I've only tested with 1.7.
@@ -830,7 +836,7 @@ class NinjaFile(object):
 
         ninja.newline()
         for name in sorted(self.overrides):
-            for num, val in sorted((num, val) for (val, num) in self.overrides[name].iteritems()):
+            for num, val in sorted((num, val) for (val, num) in self.overrides[name].items()):
                 ninja.variable('%s_%s'%(name, num), val)
 
     def write_rules(self, ninja):
@@ -1046,7 +1052,7 @@ class NinjaFile(object):
                           if dep and os.path.isfile(dep)))
 
         depfile = self.ninja_file + '.deps'
-        with file(depfile, 'w') as f:
+        with open(depfile, 'w') as f:
             f.write(self.ninja_file + ': ')
             f.write(' '.join(deps))
 
@@ -1062,11 +1068,11 @@ class NinjaFile(object):
 
 def configure(conf, env):
     if not COMMAND_LINE_TARGETS:
-        print "*** ERROR: To prevent PEBKACs, the ninja module requires that you pass a target to scons."
-        print "*** You probably forgot to include build.ninja on the command line"
-        print "***"
-        print "*** If you really want to build mongod using scons, do so explicitly or pass the"
-        print "*** --modules= flag to disable the ninja module."
+        print("*** ERROR: To prevent PEBKACs, the ninja module requires that you pass a target to scons.")
+        print("*** You probably forgot to include build.ninja on the command line")
+        print("***")
+        print("*** If you really want to build mongod using scons, do so explicitly or pass the")
+        print("*** --modules= flag to disable the ninja module.")
         Exit(1)
 
     ninja_files = [str(t) for t in BUILD_TARGETS if str(t).endswith('.ninja')]
@@ -1074,32 +1080,32 @@ def configure(conf, env):
         return
 
     try:
-        print "Checking for updates to ninja module..."
+        print("Checking for updates to ninja module...")
         subprocess.check_call(['git', '-C', my_dir, 'fetch'])
         output = subprocess.check_output(['git', '-C', my_dir, 'log', '--oneline', '@..@{upstream}'])
         if output:
-            print "***"
-            print "*** Your ninja module is out of date. New commits:"
-            print "***"
-            print output
-    except Exception, e:
+            print("***")
+            print("*** Your ninja module is out of date. New commits:")
+            print("***")
+            print(output)
+    except Exception as e:
         # Errors checking for updates shouldn't prevent building.
-        print "Ignoring error checking for updates: ", e
+        print("Ignoring error checking for updates: ", e)
 
     if 'ninja' not in env.subst("$VARIANT_DIR"):
-        print "*** WARNING: you should use a dedicated VARIANT_DIR for ninja builds to prevent"
-        print "*** conflicts with scons builds. You can suppress this by including 'ninja'"
-        print "*** in your VARIANT_DIR string."
-        print '***'
+        print("*** WARNING: you should use a dedicated VARIANT_DIR for ninja builds to prevent")
+        print("*** conflicts with scons builds. You can suppress this by including 'ninja'")
+        print("*** in your VARIANT_DIR string.")
+        print('***')
 
     if GetOption('cache'):
-        print "*** ERROR: Remove --cache flags to make ninja generation work."
-        print "*** ccache is used automatically if it is installed."
+        print("*** ERROR: Remove --cache flags to make ninja generation work.")
+        print("*** ccache is used automatically if it is installed.")
         Exit(1)
 
     if env.get('ICECC'): # flexible to support both missing and set to ''
-        print "*** ERROR: Remove ICECC=icecc flag or set to '' to make ninja generation work."
-        print "*** Use --icecream instead."
+        print("*** ERROR: Remove ICECC=icecc flag or set to '' to make ninja generation work.")
+        print("*** Use --icecream instead.")
         Exit(1)
 
     env['NINJA'] = where_is(env, 'ninja')
@@ -1111,10 +1117,10 @@ def configure(conf, env):
     # an older commit since the .ninja file depends on everything in buildscripts.
     if hasattr(errorcodes, 'list_files'):
         if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
-            print "*** WARNING: to get the most out of ninja, pass these flags to scons:"
-            print '*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"'
-            print '*** This will run the scons config less often and can make ccache more efficient'
-            print '***'
+            print("*** WARNING: to get the most out of ninja, pass these flags to scons:")
+            print('*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"')
+            print('*** This will run the scons config less often and can make ccache more efficient')
+            print('***')
         else:
             env["_NINJA_USE_ERRCODE"] = True
 
@@ -1128,7 +1134,7 @@ def configure(conf, env):
                                 for var in ('CCFLAGS', 'CFLAGS', 'CXXFLAGS'))
 
         if using_gsplitdwarf and not env.TargetOSIs('linux'):
-            print "*** ERROR: -gsplit-dwarf is only supported on Linux."
+            print("*** ERROR: -gsplit-dwarf is only supported on Linux.")
             Exit(1)
 
         if GetOption('cache_disable') or GetOption('pch'):
@@ -1145,59 +1151,59 @@ def configure(conf, env):
 
             settings = subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
             if 'max_size = 5.0G' in settings:
-                print '*** ccache is using the default 5GB cache size. You can raise it by running:'
-                print '*** ccache -o max_size=20G'
-                print '***'
+                print('*** ccache is using the default 5GB cache size. You can raise it by running:')
+                print('*** ccache -o max_size=20G')
+                print('***')
 
             if 'run_second_cpp = false' in settings:
                 # This defaults to true in new versions. Our codebase generates spurious warnings
                 # when it is false because the compiler can't see what is part of a macro expansion.
-                print '*** ERROR: Change the ccache run_second_cpp flag to true by running:'
-                print '*** ccache -o run_second_cpp=true'
-                print '***'
+                print('*** ERROR: Change the ccache run_second_cpp flag to true by running:')
+                print('*** ccache -o run_second_cpp=true')
+                print('***')
                 Exit(1)
 
             ccache_version_raw = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
                                             .split('\n', 1)[0]
                                             .split()[-1]
                                             .split('+')[0])
-            env['_NINJA_CCACHE_VERSION'] = map(int, ccache_version_raw.split('.'))
+            env['_NINJA_CCACHE_VERSION'] = [int(s) for s in ccache_version_raw.split('.')]
 
             if using_gsplitdwarf:
                 if env['_NINJA_CCACHE_VERSION']  < [3, 2, 3]:
-                    print "*** ERROR: -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version
+                    print("*** ERROR: -gsplit-dwarf requires ccache >= 3.2.3. You have: " + version)
                     Exit(1)
 
         if GetOption('icecream'):
             if GetOption('pch'):
-                print '*** ERROR: icecream is not supported with pch'
+                print('*** ERROR: icecream is not supported with pch')
                 Exit(1)
             if not env.TargetOSIs('linux'):
-                print '*** ERROR: icecream is currently only supported on linux'
+                print('*** ERROR: icecream is currently only supported on linux')
                 Exit(1)
             if not env['_NINJA_CCACHE']:
-                print '*** ERROR: icecream currently requires ccache'
+                print('*** ERROR: icecream currently requires ccache')
                 Exit(1)
 
             env['_NINJA_ICECC'] = where_is(env, 'icecc')
             if not env['_NINJA_ICECC']:
-                print "*** ERROR: Can't find icecc."
+                print("*** ERROR: Can't find icecc.")
                 Exit(1)
 
             env['_NINJA_ICERUN'] = where_is(env, 'icerun')
             if not env['_NINJA_ICERUN']:
-                print "*** ERROR: Can't find icerun."
+                print("*** ERROR: Can't find icerun.")
                 Exit(1)
 
             version = subprocess.check_output([env['_NINJA_ICECC'], '--version']).split()[1]
             if version < '1.1rc2' and version != '1.1' and version < '1.2':
-                print "*** ERROR: This requires icecc >= 1.1rc2, but you have " + version
+                print("*** ERROR: This requires icecc >= 1.1rc2, but you have " + version)
                 Exit(1)
 
             if any(flag.startswith('-fsanitize-blacklist') for flag in env['CCFLAGS']):
-                print "*** WARNING: The -fsanitize-blacklist flag only works on local builds."
-                print '*** Automatically limiting build concurrency and disabling remote execution.'
-                print '***'
+                print("*** WARNING: The -fsanitize-blacklist flag only works on local builds.")
+                print('*** Automatically limiting build concurrency and disabling remote execution.')
+                print('***')
 
                 # Use icerun so the scheduler knows we are busy. Also helps when multiple developers
                 # are using the same machine.

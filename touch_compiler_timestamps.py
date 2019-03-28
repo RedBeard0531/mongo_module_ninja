@@ -31,7 +31,7 @@ def run_if_needed(base_file, then_file, now_file):
 
 if __name__ == '__main__':
     if len(sys.argv) != 4:
-        print (sys.argv[0] + ': base_file then_file now_file')
+        print((sys.argv[0] + ': base_file then_file now_file'))
         sys.exit(1)
 
     base_file = sys.argv[1]

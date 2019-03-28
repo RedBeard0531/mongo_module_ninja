@@ -5,7 +5,7 @@ import sys
 import json
 
 if len(sys.argv) != 3:
-    print sys.argv[0] + ': out json_list'
+    print(sys.argv[0] + ': out json_list')
     sys.exit(1)
 
 out_file_name = sys.argv[1]
