@@ -1149,7 +1149,8 @@ def configure(conf, env):
                 # AddToCCFLAGSIfSupported but that is available to modules.
                 env.Append(CCFLAGS=["-Qunused-arguments"])
 
-            settings = subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
+            settings = (subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
+                            .decode('utf8'))
             if 'max_size = 5.0G' in settings:
                 print('*** ccache is using the default 5GB cache size. You can raise it by running:')
                 print('*** ccache -o max_size=20G')
@@ -1164,6 +1165,7 @@ def configure(conf, env):
                 Exit(1)
 
             ccache_version_raw = (subprocess.check_output([env['_NINJA_CCACHE'], '--version'])
+                                            .decode('utf8')
                                             .split('\n', 1)[0]
                                             .split()[-1]
                                             .split('+')[0])
@@ -1195,7 +1197,9 @@ def configure(conf, env):
                 print("*** ERROR: Can't find icerun.")
                 Exit(1)
 
-            version = subprocess.check_output([env['_NINJA_ICECC'], '--version']).split()[1]
+            version = (subprocess.check_output([env['_NINJA_ICECC'], '--version'])
+                        .decode('utf8')
+                        .split()[1])
             if version < '1.1rc2' and version != '1.1' and version < '1.2':
                 print("*** ERROR: This requires icecc >= 1.1rc2, but you have " + version)
                 Exit(1)
