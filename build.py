@@ -830,11 +830,25 @@ class NinjaFile(object):
         toolPath = myEnv.WhereIs('$'+tool)
         assert toolPath, 'Unable to find the location of tool "%s"' % tool
 
+        list_sources = strmap(sources)
+
+        if tool == 'SHLINK' and myEnv.ToolchainIs('msvc'):
+            # A Def file is considered input but they must be transformed to an argument to link.exe
+            # Make the def file an implicit dependency instead an input after removing it from
+            # sources
+            defs = [def_file for def_file in list_sources if ".def" in def_file]
+            assert len(defs) <= 1
+            if len(defs) == 1:
+                def_file = defs[0]
+                list_sources.remove(def_file)
+                implicit_deps.append(def_file)
+                myVars['_LIBFLAGS'] += " /def:" + def_file
+
         self.builds.append(dict(
             rule=tool,
             outputs=targets[0],
             implicit_outputs=targets[1:],
-            inputs=strmap(sources),
+            inputs=list_sources,
             implicit=implicit_deps + libdeps + [toolPath],
             order_only=['_generated_headers']
                        if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
@@ -1062,10 +1076,11 @@ class NinjaFile(object):
             if 'SHLINK' in self.tool_commands:
                 if 'LINK' not in self.tool_commands:
                     ninja.pool('winlink', GetOption('link-pool-depth'))
+                # Workaround mslink.py's dll handling by transforming $out to switch to link.exe
                 ninja.rule('SHLINK',
                     command = 'cmd /c $PYTHON %s $out.rsp && $SHLINK @$out.rsp'%split_lines_script,
                     rspfile = '$out.rsp',
-                    rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', ''),
+                    rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', '').replace('$out', '/OUT:$out'),
                     pool='winlink',
                     description = 'SHLINK $out')
 
