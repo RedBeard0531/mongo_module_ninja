@@ -155,23 +155,24 @@ class NinjaFile(object):
                     else 'CXX')
         pchvars = {}
 
-
-        # Note: there is also a test-pch.h, but it doesn't include much more than pch.h
-        # since I added operation_context.h. It may be useful in the future though.
-        pch_file = 'pch.h'
         for build in self.builds:
             if build['rule'] in ('CXX', 'SHCXX'):
-                if ospath('/mongo/') in build['inputs'][0]:
+                if build['inputs'][0].startswith(ospath('src/mongo')):
                     if build['inputs'][0] == ospath('src/mongo/base/system_error.cpp'):
                         # HACK: this happens to be a good file to base the pch flags off of.
                         # It needs to be in an lib in an env that hasn't had too much injection.
                         pchvars = dict(**build['variables'])
+
+                    is_test = 'test' in build['inputs'][0]
+                    if ((is_test and build['rule'] == 'SHCXX')
+                            or (not is_test and build['rule'] != pch_tool)):
+                        continue # no pch for this file.
+
+                    pch_file = 'test-pch.h' if is_test else 'pch.h'
                     if not self.globalEnv.ToolchainIs('msvc'):
                         # -include uses path to file
-                        build['variables']['pch_flags'] = ('-include ' + pch_dir +
-                                                           build['rule'] + pch_file)
-                        build.setdefault('implicit', []).append(pch_dir + build['rule'] + pch_file +
-                                                                '.$pch_suffix')
+                        build['variables']['pch_flags'] = '-include ' + pch_dir + pch_file
+                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.$pch_suffix')
                     else:
                         # /FI and friends use the same rules for paths as #include
                         build['variables']['pch_flags'] = (
@@ -198,21 +199,21 @@ class NinjaFile(object):
             else:
                 self.tool_commands[pch_tool] += ' $pch_flags'
 
-        for rule in ('SHCXX', 'CXX'):
+        for (pch_file, rule) in (('pch.h', pch_tool), ('test-pch.h', 'CXX')):
             # Copy the pch headers to the build dir so the compiled pch is there rather than in the
             # source tree. They need to be in the same directory.
             self.builds.append(dict(
                 rule='INSTALL',
-                inputs=sibling(),
-                outputs=pch_dir + rule + pch_file))
+                inputs=sibling(pch_file),
+                outputs=pch_dir + pch_file))
 
             pchvars['description']= 'PCH_{} {}.$pch_suffix'.format(rule, pch_file)
             if not self.globalEnv.ToolchainIs('msvc'):
                 pchvars['pch_flags']= '-x c++-header'
                 self.builds.append(dict(
                     rule=rule,
-                    inputs=pch_dir + rule + pch_file,
-                    outputs=pch_dir + rule + pch_file + '.$pch_suffix',
+                    inputs=pch_dir + pch_file,
+                    outputs=pch_dir + pch_file + '.$pch_suffix',
                     order_only='_generated_headers',
                     variables=pchvars,
                     ))
