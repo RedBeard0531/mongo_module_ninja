@@ -127,6 +127,8 @@ class NinjaFile(object):
         if GetOption('pch'):
             self.enable_pch()
 
+        self.hide_slow_compile_latency()
+
         assert 'COPY' not in self.vars
         if self.globalEnv.TargetOSIs('windows'):
             self.vars['COPY'] = 'cmd /c copy'
@@ -153,24 +155,23 @@ class NinjaFile(object):
                     else 'CXX')
         pchvars = {}
 
+
+        # Note: there is also a test-pch.h, but it doesn't include much more than pch.h
+        # since I added operation_context.h. It may be useful in the future though.
+        pch_file = 'pch.h'
         for build in self.builds:
             if build['rule'] in ('CXX', 'SHCXX'):
-                if build['inputs'][0].startswith(ospath('src/mongo')):
+                if ospath('/mongo/') in build['inputs'][0]:
                     if build['inputs'][0] == ospath('src/mongo/base/system_error.cpp'):
                         # HACK: this happens to be a good file to base the pch flags off of.
                         # It needs to be in an lib in an env that hasn't had too much injection.
                         pchvars = dict(**build['variables'])
-
-                    is_test = 'test' in build['inputs'][0]
-                    if ((is_test and build['rule'] == 'SHCXX')
-                            or (not is_test and build['rule'] != pch_tool)):
-                        continue # no pch for this file.
-
-                    pch_file = 'test-pch.h' if is_test else 'pch.h'
                     if not self.globalEnv.ToolchainIs('msvc'):
                         # -include uses path to file
-                        build['variables']['pch_flags'] = '-include ' + pch_dir + pch_file
-                        build.setdefault('implicit', []).append(pch_dir + pch_file + '.$pch_suffix')
+                        build['variables']['pch_flags'] = ('-include ' + pch_dir +
+                                                           build['rule'] + pch_file)
+                        build.setdefault('implicit', []).append(pch_dir + build['rule'] + pch_file +
+                                                                '.$pch_suffix')
                     else:
                         # /FI and friends use the same rules for paths as #include
                         build['variables']['pch_flags'] = (
@@ -197,21 +198,21 @@ class NinjaFile(object):
             else:
                 self.tool_commands[pch_tool] += ' $pch_flags'
 
-        for (pch_file, rule) in (('pch.h', pch_tool), ('test-pch.h', 'CXX')):
+        for rule in ('SHCXX', 'CXX'):
             # Copy the pch headers to the build dir so the compiled pch is there rather than in the
             # source tree. They need to be in the same directory.
             self.builds.append(dict(
                 rule='INSTALL',
-                inputs=sibling(pch_file),
-                outputs=pch_dir + pch_file))
+                inputs=sibling(),
+                outputs=pch_dir + rule + pch_file))
 
             pchvars['description']= 'PCH_{} {}.$pch_suffix'.format(rule, pch_file)
             if not self.globalEnv.ToolchainIs('msvc'):
                 pchvars['pch_flags']= '-x c++-header'
                 self.builds.append(dict(
                     rule=rule,
-                    inputs=pch_dir + pch_file,
-                    outputs=pch_dir + pch_file + '.$pch_suffix',
+                    inputs=pch_dir + rule + pch_file,
+                    outputs=pch_dir + rule + pch_file + '.$pch_suffix',
                     order_only='_generated_headers',
                     variables=pchvars,
                     ))
@@ -395,6 +396,59 @@ class NinjaFile(object):
         if integration_tests_dir in self.aliases['integration_tests']:
             self.aliases['integration_tests']= [t for t in self.built_targets
                                                   if t.startswith(integration_tests_dir)]
+
+    def hide_slow_compile_latency(self):
+        # Some of our TUs take substantially longer to compile. Try to start them first to mask
+        # their high latency by compiling everything else while they are going. The list of TUs was
+        # determined empirically by timing each compile at -j1 (NINJA_STATUS='%e %p ' makes this
+        # easier). We should probably revisit this list periodically.
+
+        slow_tu_parts= [
+            "topology_coordinator_v1_test",
+            "storage_interface_impl_test",
+            "expression_convert_test",
+            "transaction_coordinator_futures_util_test",
+            "options_parser_test",
+            "future_test_future", # multiple slow TUs
+            "query_planner_test",
+            "replication_coordinator_impl_test",
+            "expression_test",
+            "transport_layer_asio", # not as quite slow as others, but orig order put it very late.
+        ]
+
+        # This is a total hack. Ninja's "scheduler" that decides which task to run next relies on
+        # the order of a std::set<Edge*>. By ordering tasks higher, they seem to get lower pointer
+        # values, and therefore run earlier. Hopefully we can replace this with a proper priority
+        # system if ninja ever implements one.
+        def priority(build):
+            if build['rule'].endswith('CXX') and any(s in build['outputs'] for s in slow_tu_parts):
+                # Slowest tasks go first.
+                return 0
+            if build['rule'] == 'CXX':
+                # On average, CXX tasks take ~50% longer than SHCXX tasks, so they should be started
+                # earlier. OTOH, they are "leaf" jobs. On balance, doing them earlier seems to make
+                # builds go faster.
+                return 10
+            if build['rule'] in ('SHLINK', 'AR'):
+                # Link intermediate libs when ready rather than waiting until everything is ready.
+                return 20
+            if build['rule'] == 'LINK':
+                # Ditto final links.
+                return 30
+            if build['rule'] in ('SHCXX', 'SHCC', 'CC'):
+                # Do third_party first, both because the mozjs "unified" TUs are fairly slow, and to
+                # unblock links.
+                if 'third_party' in build['outputs']:
+                    return 40
+                # All of our library code.
+                # TODO it may be worth ordering by LIBDEPS depth, deepest first.
+                return 50
+
+            # Everything else gets ordered early so they don't unnecessarily delay tasks that depend
+            # on them.
+            return -99
+
+        self.builds.sort(key=priority)
 
     def find_build_nodes(self):
         seen = set()
