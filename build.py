@@ -1219,7 +1219,7 @@ def configure(conf, env):
                 # AddToCCFLAGSIfSupported but that is available to modules.
                 env.Append(CCFLAGS=["-Qunused-arguments"])
 
-            settings = (subprocess.check_output([env['_NINJA_CCACHE'], '--print-config'])
+            settings = (subprocess.check_output([env['_NINJA_CCACHE'], '-p'])
                             .decode('utf8'))
             if 'max_size = 5.0G' in settings:
                 print('*** ccache is using the default 5GB cache size. You can raise it by running:')
