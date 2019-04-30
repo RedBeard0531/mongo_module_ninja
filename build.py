@@ -1157,7 +1157,7 @@ def configure(conf, env):
             print("***")
             print("*** Your ninja module is out of date. New commits:")
             print("***")
-            print(output)
+            print(output.decode('utf8'))
     except Exception as e:
         # Errors checking for updates shouldn't prevent building.
         print("Ignoring error checking for updates: ", e)
