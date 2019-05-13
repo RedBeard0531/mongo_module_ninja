@@ -1,3 +1,4 @@
+//    Copyright (C) 2019-present MongoDB, Inc.
 #include "mongo/platform/basic.h"
 
 #include <memory>
