@@ -12,6 +12,7 @@ import glob
 import json
 import shlex
 import fnmatch
+import requests
 import subprocess
 import multiprocessing
 from buildscripts import errorcodes
@@ -98,6 +99,48 @@ def strmap(node_list):
     for node in node_list:
         assert isinstance(node, (str, SCons.Node.FS.Base, SCons.Node.Alias.Alias))
     return [str(node) for node in node_list]
+
+def fetch_icecream_tarball():
+    LINK_URL = 'http://mongodbtoolchain.build.10gen.cc/icecream/ubuntu1604/x86_64/latest'
+    NAME_FILE = 'build/icecc_envs/latest'
+    os.makedirs('build/icecc_envs', exist_ok = True)
+
+    response = requests.head(LINK_URL, allow_redirects=True)
+    if not response.ok:
+        if os.path.exists(NAME_FILE):
+            with open(NAME_FILE) as f:
+                local_file = f.read()
+                print("Can't fetch {}, assuming {} is up to date".format(LINK_URL, local_file))
+                return local_file
+        else:
+            print("error fetching url for latest icecream env: " + str(response))
+            Exit(1)
+
+    url = response.url
+    size = int(response.headers['Content-length'])
+
+    remote_file = url.split('/')[-1]
+    local_file = os.path.join('build', 'icecc_envs', remote_file)
+    if (os.path.exists(NAME_FILE)
+            and os.path.exists(local_file)
+            and os.stat(local_file).st_size == size):
+        with open(NAME_FILE) as f:
+            if f.read() == remote_file:
+                print("{} up to date".format(local_file))
+                return local_file
+
+    print("fetching {} ({}MB)".format(url, size // (1024*1024)))
+    response = requests.get(url)
+    if not response.ok:
+        print("error fetching latest icecream env: " + str(response))
+        Exit(1)
+    with open(local_file, "wb") as f:
+        f.write(response.content)
+
+    with open(NAME_FILE, 'w') as f:
+        f.write(local_file)
+
+    return local_file
 
 class NinjaFile(object):
     def __init__(self, name, env):
@@ -359,12 +402,8 @@ class NinjaFile(object):
                 compile_flags += [ '-frewrite-includes' ]
 
             if self.globalEnv.TargetOSIs("darwin"):
-                #TODO make this not hard coded.
-                version_file = 'build/068d6674432389b2ebd816aaa622d614.tar.gz'
-                if not os.path.exists(version_file):
-                    #TODO download automatically rather than erroring
-                    print("*** ERROR: Missing clang toolchain tarball at '%s'." % (version_file))
-                    Exit(1)
+                version_file = fetch_icecream_tarball()
+                assert os.path.exists(version_file)
                 env_flags += [ 'ICECC_VERSION=x86_64:%s' % version_file ]
             else:
                 env_flags += [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]

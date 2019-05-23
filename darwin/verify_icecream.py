@@ -75,13 +75,5 @@ in System Preferences.""")
     if len([ice for ice in processes_list.splitlines() if "iceccd" in ice]) > 1:
         exit_with_error("iceccd is running more then once. Icecream will not work as a result.")
 
-    # Step 3 - Check for magic tarball
-    if os.path.exists("build") and not os.path.exists("build/a91375a9328f2a515182caf1be3e2f2c.tar.gz"):
-        exit_with_error("""Linux toolchain tarball not found.
-Download linux tarball from here via Google Chrome (or any browser you are signed into your 10gen google account with):
-https://drive.google.com/file/d/1OaoPq_wEfW5sJsc3aRwQMc0gBULIbRBp/view?usp=sharing
-and call it `a91375a9328f2a515182caf1be3e2f2c.tar.gz`. Put it in the `build` directory in your mongo repo.
-""")
-
 if __name__ == "__main__":
     verify_icecream()
