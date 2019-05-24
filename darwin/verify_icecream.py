@@ -18,10 +18,9 @@ def exit_with_error(err_str):
     sys.exit(1)
 
 
-def exit_with_warning(err_str):
-    """print error in red and exit."""
+def print_warning(err_str):
+    """print warning in yellow."""
     print("\033[93mWARNING: %s\033[0m" % (err_str))
-    sys.exit(0)
 
 
 def print_ok(err_str):
@@ -61,7 +60,7 @@ def verify_icecream():
         found_ethernet = True
 
     if not found_ethernet:
-        exit_with_warning(
+        print_warning(
 """No wired ethernet connection found. Icecream only works with on a
 wired network. Make sure a ethernet adaptor is connected. See "Network"
 in System Preferences.""")
@@ -70,7 +69,7 @@ in System Preferences.""")
     processes_list = subprocess.check_output(["ps", "-axco", "pid,comm"]).decode('utf-8')
 
     if not "iceccd" in processes_list:
-        exit_with_warning("iceccd is not run. Please run src/mongo/db/modules/ninja/setup_icecream.py to run it.")
+        exit_with_error("iceccd is not running. Please run src/mongo/db/modules/ninja/darwin/setup_icecream.py to run it.")
 
     if len([ice for ice in processes_list.splitlines() if "iceccd" in ice]) > 1:
         exit_with_error("iceccd is running more then once. Icecream will not work as a result.")

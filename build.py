@@ -349,29 +349,22 @@ class NinjaFile(object):
                 build.setdefault('order_only', []).append(timestamp_file)
 
     def add_icecream_check(self):
-        # Run the verification script now to warn the user if icecream is running
-        subprocess.check_call([sys.executable, verify_icecream_script])
-
-        timestamp_file = os.path.join('build', 'compiler_timestamps', 'icecream_check.timestamp')
-        command = self.make_command( '$PYTHON {} \n ( echo "" > {} )'.format(
-            verify_icecream_script,
-            timestamp_file))
+        # Run the verification script on every build to warn the user if icecream is not running
+        dummy_target = '_verify_icecream_setup'
         self.builds.append(dict(
             rule='EXEC',
-            implicit=self.ninja_file,
-            outputs=timestamp_file,
+            inputs='_ALWAYS_BUILD',
+            outputs=dummy_target,
             variables=dict(
-                command=command,
+                command='$PYTHON ' + verify_icecream_script,
                 description='Checking for a proper icecream setup',
-                deps='msvc',
-                msvc_deps_prefix='scanning file: ',
                 )))
 
         # Do this before trying to compile since it is very quick and we want to alert if we are in
         # a bad state.
         for build in self.builds:
             if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
-                build.setdefault('order_only', []).append(timestamp_file)
+                build.setdefault('order_only', []).append(dummy_target)
 
 
     def set_up_ccache(self):
