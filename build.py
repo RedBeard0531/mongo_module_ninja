@@ -286,6 +286,13 @@ class NinjaFile(object):
             os.path.join('build', 'unittests'),
             os.path.join('build', 'benchmark'),
         )
+
+        # If we translated the newer scons generated @ rules to + rules, do not add duplicates
+        for build in self.builds:
+            for output in build['outputs']:
+                if output.startswith('+'):
+                    return
+
         def is_test_like(name):
             return any(name.startswith(path) for path in paths)
         tests = [flatten(build['inputs'])[0]
@@ -805,17 +812,34 @@ class NinjaFile(object):
                 ))
             return
         elif tool not in ('$CC', '$CXX', '$SHCC', '$SHCXX', '$LINK', '$SHLINK', '$AR', '$RC'):
+            list_targets = strmap(targets)
+            list_sources = strmap(sources)
+
             n.scan() # We need this for IDL.
             implicit_deps += strmap(n.implicit)
             self.builds.append(dict(
                 rule='EXEC',
-                outputs=strmap(targets),
-                inputs=strmap(sources),
+                outputs=list_targets,
+                inputs=list_sources,
                 implicit=implicit_deps,
                 variables={
                     'command': self.make_command(myEnv.subst(str(n.executor), executor=n.executor)),
                     }
                 ))
+
+            # Starting in SERVER-4304, there is no more install rules for unittests but there is a
+            # rule for running them with @. Use that rule as a guideline to build our own "+" rule.
+            # The plus rule is surperior since it uses the console logger to avoid interlacing of
+            # tests.
+            if list_targets[0].startswith("@"):
+                test_name = list_targets[0]
+                test_name = '+' + test_name[1:]
+                self.builds.append(dict(
+                        rule='RUN_TEST',
+                        outputs=test_name,
+                        inputs=list_sources
+                    ))
+
             return
 
         self.tool_paths.add(myEnv.WhereIs(tool))
