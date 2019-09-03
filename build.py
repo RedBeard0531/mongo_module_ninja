@@ -827,7 +827,7 @@ class NinjaFile(object):
                     }
                 ))
 
-            # Starting in SERVER-4304, there is no more install rules for unittests but there is a
+            # Starting in SERVER-43047, there is no more install rules for unittests but there is a
             # rule for running them with @. Use that rule as a guideline to build our own "+" rule.
             # The plus rule is surperior since it uses the console logger to avoid interlacing of
             # tests.
