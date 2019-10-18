@@ -857,11 +857,17 @@ class NinjaFile(object):
                 # Add shortcuts for this unit test.
                 for unit_test_source_file in \
                         n.executor.get_all_children()[0].executor.get_all_sources():
-                    pos_last_slash = str(unit_test_source_file).rfind('/')
-                    stripped_name = str(unit_test_source_file)[pos_last_slash + 1:-2]
+                    # Get the file name
+                    pos_last_slash = str(unit_test_source_file).rfind(os.path.sep)
+                    # Strip the '.o' or '.obj'
+                    stripped_name = str(unit_test_source_file)[pos_last_slash + 1:]
+                    pos_last_dot = stripped_name.find(".")
+                    stripped_name = stripped_name[:pos_last_dot]
 
                     if "_test" in stripped_name[len(stripped_name) - 5:]:
-                        stripped_name = '+' + stripped_name
+                        # Add suffix to tests on Windows to match other unit tests
+                        suffix = ".exe" if self.globalEnv.TargetOSIs('windows') else ""
+                        stripped_name = '+' + stripped_name + suffix
                         if (stripped_name not in self.unittest_shortcuts and stripped_name not
                                 in self.unittest_skipped_shortcuts):
                             # Add a shortcut for the given unit test file name.
