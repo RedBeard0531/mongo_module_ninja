@@ -16,6 +16,8 @@ import requests
 import subprocess
 import multiprocessing
 from buildscripts import errorcodes
+from os.path import basename
+from os.path import splitext
 
 
 my_dir = os.path.dirname(__file__)
@@ -289,6 +291,9 @@ class NinjaFile(object):
             os.path.join('build', 'benchmark'),
         )
 
+        for key in self.unittest_shortcuts:
+            self.builds.append(self.unittest_shortcuts[key])
+
         # If we translated the newer scons generated @ rules to + rules, do not add duplicates
         for build in self.builds:
             for output in build['outputs']:
@@ -556,8 +561,6 @@ class NinjaFile(object):
                     print()
                     raise
 
-        self.add_unit_test_shortcuts()
-
         for build in self.builds:
             # Make everything build by scons depend on the ninja file. This makes them transitively
             # depend on all of the scons dependencies so scons gets a chance to rebuild them
@@ -574,10 +577,6 @@ class NinjaFile(object):
         if self.globalEnv.TargetOSIs('windows'):
             cmd = 'cmd /c ' + cmd
         return cmd
-
-    def add_unit_test_shortcuts(self):
-        for key in self.unittest_shortcuts:
-            self.builds.append(self.unittest_shortcuts[key])
 
     def handle_build_node(self, n):
         # TODO break this function up
@@ -857,30 +856,25 @@ class NinjaFile(object):
                 # Add shortcuts for this unit test.
                 for unit_test_source_file in \
                         n.executor.get_all_children()[0].executor.get_all_sources():
-                    # Get the file name
-                    pos_last_slash = str(unit_test_source_file).rfind(os.path.sep)
-                    # Strip the '.o' or '.obj'
-                    stripped_name = str(unit_test_source_file)[pos_last_slash + 1:]
-                    pos_last_dot = stripped_name.find(".")
-                    stripped_name = stripped_name[:pos_last_dot]
+                    test_file_name = splitext(basename(str(unit_test_source_file)))[0]
 
-                    if "_test" in stripped_name[len(stripped_name) - 5:]:
+                    if "_test" in test_file_name[len(test_file_name) - 5:]:
                         # Add suffix to tests on Windows to match other unit tests
                         suffix = ".exe" if self.globalEnv.TargetOSIs('windows') else ""
-                        stripped_name = '+' + stripped_name + suffix
-                        if (stripped_name not in self.unittest_shortcuts and stripped_name not
+                        test_file_name = '+' + test_file_name + suffix
+                        if (test_file_name not in self.unittest_shortcuts and test_file_name not
                                 in self.unittest_skipped_shortcuts):
                             # Add a shortcut for the given unit test file name.
-                            self.unittest_shortcuts[stripped_name] = dict(
-                                rule='RUN_TEST',
-                                outputs=stripped_name,
-                                inputs=list_sources
+                            self.unittest_shortcuts[test_file_name] = dict(
+                                rule='phony',
+                                outputs=test_file_name,
+                                inputs=test_name
                             )
-                        elif stripped_name in self.unittest_shortcuts:
+                        elif test_file_name in self.unittest_shortcuts:
                             # There are multiple unit tests with the same file name. So we cannot
                             # create a shortcut for this test name.
-                            del self.unittest_shortcuts[stripped_name]
-                            self.unittest_skipped_shortcuts.add(stripped_name)
+                            del self.unittest_shortcuts[test_file_name]
+                            self.unittest_skipped_shortcuts.add(test_file_name)
 
             return
 
