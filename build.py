@@ -872,7 +872,7 @@ class NinjaFile(object):
                         elif test_file_name in self.unittest_shortcuts:
                             # There are multiple unit tests with the same file name. So we cannot
                             # create a shortcut for this test name.
-                            print('*** Duplicate test file name detected. No alias has been created for it, recommend renaming:', test_file_name)
+                            print('*** Duplicate test file name detected. No alias has been created for it, recommend renaming:', test_file_name[1:] + '.cpp')
                             del self.unittest_shortcuts[test_file_name]
                             self.unittest_skipped_shortcuts.add(test_file_name)
 
