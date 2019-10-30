@@ -16,6 +16,7 @@ import requests
 import subprocess
 import multiprocessing
 from buildscripts import errorcodes
+from os.path import basename, splitext
 
 
 my_dir = os.path.dirname(__file__)
@@ -155,6 +156,8 @@ class NinjaFile(object):
         self.built_targets = set()
         self.generated_headers = set()
         self.rc_files = []
+        self.unittest_shortcuts = {}
+        self.unittest_skipped_shortcuts = set()
 
         self.init_idl_dependencies()
         self.find_build_nodes()
@@ -286,6 +289,9 @@ class NinjaFile(object):
             os.path.join('build', 'unittests'),
             os.path.join('build', 'benchmark'),
         )
+
+        for key in self.unittest_shortcuts:
+            self.builds.append(self.unittest_shortcuts[key])
 
         # If we translated the newer scons generated @ rules to + rules, do not add duplicates
         for build in self.builds:
@@ -834,11 +840,41 @@ class NinjaFile(object):
             if list_targets[0].startswith("@"):
                 test_name = list_targets[0]
                 test_name = '+' + test_name[1:]
+
+                # These take priority over unit test shortcut names.
+                self.unittest_skipped_shortcuts.add(test_name)
+                if test_name in self.unittest_shortcuts.keys():
+                    del self.unittest_shortcuts[test_name]
+
                 self.builds.append(dict(
                         rule='RUN_TEST',
                         outputs=test_name,
                         inputs=list_sources
                     ))
+
+                # Add shortcuts for this unit test.
+                for unit_test_source_file in \
+                        n.executor.get_all_children()[0].executor.get_all_sources():
+                    test_file_name = splitext(basename(str(unit_test_source_file)))[0]
+
+                    if "_test" in test_file_name:
+                        # Add suffix to tests on Windows to match other unit tests
+                        suffix = ".exe" if self.globalEnv.TargetOSIs('windows') else ""
+                        test_file_name = '+' + test_file_name + suffix
+                        if (test_file_name not in self.unittest_shortcuts and test_file_name not
+                                in self.unittest_skipped_shortcuts):
+                            # Add a shortcut for the given unit test file name.
+                            self.unittest_shortcuts[test_file_name] = dict(
+                                rule='phony',
+                                outputs=test_file_name,
+                                inputs=test_name
+                            )
+                        elif test_file_name in self.unittest_shortcuts:
+                            # There are multiple unit tests with the same file name. So we cannot
+                            # create a shortcut for this test name.
+                            print('*** Duplicate test file name detected. No alias has been created for it, recommend renaming:', test_file_name[1:] + '.cpp')
+                            del self.unittest_shortcuts[test_file_name]
+                            self.unittest_skipped_shortcuts.add(test_file_name)
 
             return
 
