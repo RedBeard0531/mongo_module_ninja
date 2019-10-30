@@ -16,8 +16,7 @@ import requests
 import subprocess
 import multiprocessing
 from buildscripts import errorcodes
-from os.path import basename
-from os.path import splitext
+from os.path import basename, splitext
 
 
 my_dir = os.path.dirname(__file__)
@@ -858,7 +857,7 @@ class NinjaFile(object):
                         n.executor.get_all_children()[0].executor.get_all_sources():
                     test_file_name = splitext(basename(str(unit_test_source_file)))[0]
 
-                    if "_test" in test_file_name[len(test_file_name) - 5:]:
+                    if "_test" in test_file_name:
                         # Add suffix to tests on Windows to match other unit tests
                         suffix = ".exe" if self.globalEnv.TargetOSIs('windows') else ""
                         test_file_name = '+' + test_file_name + suffix
@@ -873,6 +872,7 @@ class NinjaFile(object):
                         elif test_file_name in self.unittest_shortcuts:
                             # There are multiple unit tests with the same file name. So we cannot
                             # create a shortcut for this test name.
+                            print('*** Duplicate test file name detected. No alias has been created for it, recommend renaming:', test_file_name)
                             del self.unittest_shortcuts[test_file_name]
                             self.unittest_skipped_shortcuts.add(test_file_name)
 
