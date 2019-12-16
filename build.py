@@ -173,6 +173,10 @@ class NinjaFile(object):
             if env.TargetOSIs('darwin'):
                 self.add_icecream_check()
             self.set_up_icecc()
+        if env.get('_NINJA_NO_TEST_EXECUTION'):
+            self.setup_test_execution = False
+        else:
+            self.setup_test_execution = True
 
         if GetOption('pch'):
             self.enable_pch()
@@ -282,6 +286,10 @@ class NinjaFile(object):
                     ))
 
     def add_run_test_builds(self):
+        # Rules for executing tests where added upstream, if they're enabled this method is a no-op
+        if not self.setup_test_execution:
+            return
+        
         # For everything that gets installed to build/unittests, add a rule for +basename
         # that runs the test from its original location.
         paths = (
