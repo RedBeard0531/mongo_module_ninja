@@ -173,10 +173,8 @@ class NinjaFile(object):
             if env.TargetOSIs('darwin'):
                 self.add_icecream_check()
             self.set_up_icecc()
-        if env.get('_NINJA_NO_TEST_EXECUTION'):
-            self.setup_test_execution = False
-        else:
-            self.setup_test_execution = True
+        
+        self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
 
         if GetOption('pch'):
             self.enable_pch()
