@@ -158,7 +158,8 @@ class NinjaFile(object):
         self.rc_files = []
         self.unittest_shortcuts = {}
         self.unittest_skipped_shortcuts = set()
-
+        self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
+        
         self.init_idl_dependencies()
         self.find_build_nodes()
         self.find_aliases()
@@ -173,8 +174,6 @@ class NinjaFile(object):
             if env.TargetOSIs('darwin'):
                 self.add_icecream_check()
             self.set_up_icecc()
-        
-        self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
 
         if GetOption('pch'):
             self.enable_pch()
