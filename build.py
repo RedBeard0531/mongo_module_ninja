@@ -158,7 +158,8 @@ class NinjaFile(object):
         self.rc_files = []
         self.unittest_shortcuts = {}
         self.unittest_skipped_shortcuts = set()
-
+        self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
+        
         self.init_idl_dependencies()
         self.find_build_nodes()
         self.find_aliases()
@@ -282,6 +283,10 @@ class NinjaFile(object):
                     ))
 
     def add_run_test_builds(self):
+        # Rules for executing tests where added upstream, if they're enabled this method is a no-op
+        if not self.setup_test_execution:
+            return
+        
         # For everything that gets installed to build/unittests, add a rule for +basename
         # that runs the test from its original location.
         paths = (
