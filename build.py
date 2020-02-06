@@ -159,7 +159,7 @@ class NinjaFile(object):
         self.unittest_shortcuts = {}
         self.unittest_skipped_shortcuts = set()
         self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
-        
+
         self.init_idl_dependencies()
         self.find_build_nodes()
         self.find_aliases()
@@ -286,7 +286,7 @@ class NinjaFile(object):
         # Rules for executing tests where added upstream, if they're enabled this method is a no-op
         if not self.setup_test_execution:
             return
-        
+
         # For everything that gets installed to build/unittests, add a rule for +basename
         # that runs the test from its original location.
         paths = (
@@ -473,13 +473,18 @@ class NinjaFile(object):
                 # For some reason we sometimes define a task then alias it to itself.
                 continue
 
+            if not alias.has_builder():
+                # Hygienic mode produces empty aliases
+                continue
+
             if alias.get_builder() == SCons.Environment.AliasBuilder:
                 # "pure" aliases
                 self.aliases[str(alias)] = [str(s) for s in alias.sources]
                 pass
             else:
                 # Ignore these for now
-                assert (str(alias) in ('dist', 'lint'))
+                # aib targets are specific to hygienic
+                assert (str(alias) in ('dist', 'lint', 'list-aib-components', 'list-aib-targets'))
 
         # Fix integration_tests alias to point to files rather than directories.
         # TODO remove after CR merged
@@ -551,7 +556,6 @@ class NinjaFile(object):
             if isinstance(n, SCons.Node.FS.Dir): continue
             if str(n.executor).startswith('write_uuid_to_file('): continue
             if os.path.join('','sconf_temp','conftest') in str(n): continue
-            if str(n).startswith(os.path.join('build','install','')): continue
 
             # We see each build task once per target, but we handle all targets the first time.
             if id(n.executor) not in seen:
@@ -590,10 +594,16 @@ class NinjaFile(object):
             # different ways in different places. For now, only support this usage.
             assert len(n.executor.post_actions) == 1
             assert len(n.executor.action_list) == 1
-            assert n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action
-            if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
-                assert str(n.executor.post_actions[0]).startswith('Chmod(')
-                assert 'oug+x' in str(n.executor.post_actions[0])
+            if n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action:
+                if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
+                    assert str(n.executor.post_actions[0]).startswith('Chmod(')
+                    assert 'oug+x' in str(n.executor.post_actions[0])
+            elif isinstance(n.executor.action_list[0], SCons.Action.FunctionAction):
+                if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
+                    assert str(n.executor.post_actions[0]).startswith('Chmod(')
+                    assert 'oug+x' in str(n.executor.post_actions[0])
+            else:
+                raise ValueError("Unknown post action: %s" % (n.executor.action_list[0]))
             n.executor.post_actions = []
             do_chmod = True
         else:
@@ -613,6 +623,12 @@ class NinjaFile(object):
         targets = n.executor.get_all_targets()
         sources = n.executor.get_all_sources()
         implicit_deps = strmap(n.depends)
+
+        # Archives generated in hygienic defer their dependency generation so we need to call generator()
+        if isinstance(action, SCons.Action.CommandGeneratorAction) and \
+            "aib_make_archive.py" in str(n.executor):
+            cmd = action.generator(sources, targets, myEnv, for_signature=False)
+            n.executor.set_action_list([Action(cmd)])
 
         for target in targets:
             if target.always_build:
