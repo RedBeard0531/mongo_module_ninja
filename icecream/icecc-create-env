@@ -5,18 +5,30 @@
 # GPL
 
 target_files=
+add_file_duplicates=
 
-is_darwin=0
-if test `uname` = Darwin; then
-  is_darwin=1
-fi
+# Optional path to strip from all paths if present, e.g. if the compiler is not in /usr.
+stripprefix=
+
+case $(uname) in
+    "Darwin") is_darwin=1;;
+    "FreeBSD") is_freebsd=1;;
+    "Linux") is_linux=1;;
+esac
 
 usage ()
 {
-    echo "usage: $0 --gcc <gcc_path> <g++_path>"
-    echo "usage: $0 --clang <clang_path> <compiler_wrapper>"
-    echo "usage: Use --addfile <file> to add extra files."
-    echo "usage: Remaining argument (if present) is used as output path."
+    echo "Create compiler environment for distributed build."
+    echo "Usage: $0 <compiler_binary> [extra_options]"
+    echo "For GCC, pass the the gcc binary, the matching g++ will be used automatically."
+    echo "For Clang, pass the clang binary."
+    echo "Use --addfile <file> to add extra files."
+    echo "Use --compression <type> to set tarball type (none,gzip,bzip2,zstd,xz)."
+    # MONGODB - add out parameter
+    echo "Use --out <file> to set tarball name."
+    echo "For backwards compatibility, the following is also supported:"
+    echo "$0 --gcc <gcc_path> <g++_path>"
+    echo "$0 --clang <clang_path>"
 }
 
 is_contained ()
@@ -28,18 +40,78 @@ is_contained ()
   esac
 }
 
+is_add_file_duplicate ()
+{
+  case " $add_file_duplicates " in
+    *" $1 "* ) return 0 ;;
+    * ) return 1 ;;
+  esac
+}
+
+# returns abs path to filedir
+abs_path()
+{
+    local path=$1
+    if test -f "$path"; then
+        pushd $(dirname $path) > /dev/null 2>&1
+        dir_path=$(pwd -P)
+        path=$dir_path/$(basename $path)
+        popd > /dev/null 2>&1
+    elif test -d "$path"; then
+        pushd $path > /dev/null 2>&1
+        path=$(pwd -P)
+        popd > /dev/null 2>&1
+    fi
+    echo $path
+}
+
+# return abs path to filedir with symlinks resolved
+resolve_path()
+{
+    local_path=$1
+    # pwd -P in abs_path will take care of resolving symlinks in the path,
+    # so take care just of the file component itself
+    while test -L "$local_path"; do
+        pushd $(dirname $local_path) >/dev/null 2>&1
+        local_path=$(abs_path $(readlink $(basename $local_path)))
+        popd > /dev/null 2>&1
+    done
+    abs_path $local_path
+}
+
+# Avoid /../ components in paths such as /usr/X11/../lib64 .
+# This could use realpath, but that's reportedly not that widely available.
+convert_path_cdup ()
+{
+  local filename="$1"
+  local directory=$(dirname $filename)
+  local fixed_directory=$(cd "$directory" >/dev/null && pwd)
+  echo ${fixed_directory}/$(basename $filename)
+}
+
 add_file ()
 {
+  local skipldd=
+  if test "$1" = "skipldd"; then
+    skipldd=1
+    shift
+  fi
   local name="$1"
   local path="$1";
   if test -n "$2"; then
     name="$2"
   fi
   test -z "$name" && return
-  # ls -H isn't really the same as readlink, but
-  # readlink is not portable enough.
-  path=`ls -H $path`
-  name="$(echo "$name" | sed -e 's|[^/]*/\.\./||g')" # attempt to resolve foo/../bar
+
+  # it is faster to check as quickly as possible, is_contained checks duplicates too, but this saves time
+  is_add_file_duplicate "$name" && return
+  add_file_duplicates="$add_file_duplicates $name"
+
+  path=$(resolve_path $path)
+  name=$(convert_path_cdup $name)
+  if test -n "$stripprefix"; then
+    name=$(echo $name | sed "s#$stripprefix#/usr#" )
+  fi
   toadd="$name=$path"
   if test "$name" = "$path"; then
     toadd=$path
@@ -47,7 +119,7 @@ add_file ()
   is_contained "$toadd" && return
   echo "adding file $toadd"
   target_files="$target_files $toadd"
-  if test -x "$path"; then
+  if test -x "$path" -a -z "$skipldd"; then
     # Only call ldd when it makes sense
     if file -L "$path" | grep 'ELF' > /dev/null 2>&1; then
 	if ! file -L "$path" | grep 'static' > /dev/null 2>&1; then
@@ -58,13 +130,46 @@ add_file ()
 		#         libc.so.6 => /lib/tls/libc.so.6 (0xb7e81000)
 		#         /lib/ld-linux.so.2 (0xb7fe8000)
 		# covering both situations ( with => and without )
-           for lib in `ldd "$path" | sed -n 's,^[^/]*\(/[^ ]*\).*,\1,p'`; do
+           local lib
+           for lib in $(ldd "$path" | sed -n 's,^[^/]*\(/[^ ]*\).*,\1,p'); do
 	      test -f "$lib" || continue
-	      # Check wether the same library also exists in the parent directory,
+	      # Check whether the same library also exists in the parent directory,
 	      # and prefer that on the assumption that it is a more generic one.
-	      local baselib=`echo "$lib" | sed 's,\(/[^/]*\)/.*\(/[^/]*\)$,\1\2,'`
-	      test -f "$baselib" && lib=$baselib
-              add_file "$lib"
+	      local baselib=$(echo "$lib" | sed 's,\(/[^/]*\)/.*\(/[^/]*\)$,\1\2,')
+              usebaselib=
+              if test "$baselib" != "$lib" -a -f "$baselib"; then
+                # Make sure the base lib has the same architecture.
+                local archlib="$(objdump -f "$lib" | grep architecture)"
+                local archbaselib="$(objdump -f "$baselib" | grep architecture)"
+                if test "$archlib" = "$archbaselib"; then
+                  usebaselib=1
+                fi
+              fi
+              if test -n "$usebaselib"; then
+                lib=$baselib
+                add_file "$lib"
+              else
+                # Optimization: We are adding a library we got from ldd output, so avoid
+                # using ldd on it, as it should not find more than this ldd.
+                add_file "skipldd" "$lib"
+              fi
+
+              # Add the non-haswell and non-avx512_1 libraries too
+              case "$lib" in
+                 */haswell/*|*/avx512_1/*)
+                    ;;
+                 *)
+                    continue
+                    ;;
+              esac
+              local lib_non_avx512=$(echo "$lib" | sed s,/avx512_1/,/,)
+              local lib_non_hsw=$(echo "$lib_non_avx512" | sed s,/haswell/,/,)
+              if [ "$lib" != "$lib_non_avx512" ] && [ -f "$lib_non_avx512" ]; then
+                add_file "$lib_non_avx512"
+              fi
+              if [ "$lib" != "$lib_non_hsw" ] && [ -f "$lib_non_hsw" ]; then
+                add_file "$lib_non_hsw"
+              fi
            done
         fi
     elif test "$is_darwin" = 1; then
@@ -74,11 +179,11 @@ add_file ()
           #         /usr/lib/libiconv.2.dylib
           #         /usr/lib/libSystem.B.dylib
           #         /usr/lib/libstdc++.6.dylib
-          for lib in `otool -L "$path" | sed -n 's,^[^/@]*\([/@][^ ]*\).*,\1,p'`; do
+          for lib in $(otool -L "$path" | sed -n 's,^[^/@]*\([/@][^ ]*\).*,\1,p'); do
             local libinstall=""
             if test "${lib%%/*}" = "@executable_path"; then
               # Installs libs like @executable_path/libllvmgcc.dylib
-              # that contains @executable_path in its path in `dirname ${name}`
+              # that contains @executable_path in its path in $(dirname ${name})
               # (the same install path of the executable program)
               libinstall="${name%/*}${lib#@executable_path}"
               lib="${path%/*}${lib#@executable_path}"
@@ -86,29 +191,12 @@ add_file ()
 	    test -f "$lib" || continue
 	    # Check wether the same library also exists in the parent directory,
 	    # and prefer that on the assumption that it is a more generic one.
-	    local baselib=`echo "$lib" | sed 's,\(/[^/]*\)/.*\(/[^/]*\)$,\1\2,'`
+	    local baselib=$(echo "$lib" | sed 's,\(/[^/]*\)/.*\(/[^/]*\)$,\1\2,')
 	    test -f "$baselib" && lib=$baselib
-            add_file "$lib" "$libinstall"
+	          add_file "$lib" "$libinstall"
          done
     fi
   fi
-}
-
-# returns abs path to filedir
-abs_path()
-{
-    local path=$1
-    if test -f "$path"; then
-        pushd $(dirname $path) > /dev/null 2>&1
-        dir_path=`pwd -P`
-        path=$dir_path/$(basename $path)
-        popd > /dev/null 2>&1
-    elif test -d "$path"; then
-        pushd $path > /dev/null 2>&1
-        path=`pwd -P`
-        popd > /dev/null 2>&1
-    fi
-    echo $path
 }
 
 # Search and add file to the tarball file.
@@ -122,7 +210,11 @@ search_addfile()
     file=$($compiler -print-prog-name=$file_name)
 
     if test -z "$file" || test "$file" = "$file_name" || ! test -e "$file"; then
-        file=`$compiler -print-file-name=$file_name`
+        file=$($compiler -print-file-name=$file_name)
+    fi
+
+    if test "$file" = "$file_name"; then
+        file=$(command -v $file_name || echo $file_name)
     fi
 
     if ! test -e "$file"; then
@@ -131,24 +223,11 @@ search_addfile()
 
     if test -z "$file_installdir"; then
         # The file is going to be added to the tarball
-        # in the same path where the compiler found it.
+        # in the same path where the compiler found it, as an absolute path.
+        # If it's not in the /usr prefix, stripprefix handling will take care of that.
 
         file_installdir=$(dirname $file)
-        abs_installdir=$(abs_path $file_installdir)
-
-        if test "$file_installdir" != "$abs_installdir"; then
-            # The path where the compiler found the file is relative!
-            # If the path where the compiler found the file is relative
-            # to compiler's path, we must change it to be relative to
-            # /usr/bin path where the compiler is going to be installed
-            # in the tarball file.
-            # Replacing relative path by abs path because the tar command
-            # used to create the tarball file doesn't work well with
-            # relative path as installdir.
-
-            compiler_basedir=$(abs_path ${compiler%/*/*})
-            file_installdir=${abs_installdir/$compiler_basedir/"/usr"}
-        fi
+        file_installdir=$(abs_path $file_installdir)
     fi
 
     add_file "$file" "$file_installdir/$file_name"
@@ -161,14 +240,40 @@ if test "$1" = "--respect-path"; then
   shift
 fi
 
-if test "$1" != "--gcc" -a "$1" != "--clang"; then
-    # backward compat
+if test "$1" = "--gcc"; then
+    shift
     added_gcc=$1
     shift
     added_gxx=$1
     shift
     gcc=1
-else
+    if test "$1" = "--clang"; then
+        shift
+        added_clang=$1
+        shift
+        if test "x$1" != "x--addfile" -a "x$1" != "x--gcc" -a -e "$1"; then
+            # accept 2nd argument being the compilerwrapper binary, for backwards compatibility
+            added_compilerwrapper=$1
+            shift
+        fi
+        if test -z "$added_compilerwrapper"; then
+            added_compilerwrapper=/usr/local/libexec/icecc/compilerwrapper
+        fi
+        clang=1
+    fi
+elif test "$1" = "--clang"; then
+    shift
+    added_clang=$1
+    shift
+    if test "x$1" != "x--addfile" -a "x$1" != "x--gcc" -a -e "$1"; then
+        # accept 2nd argument being the compilerwrapper binary, for backwards compatibility
+        added_compilerwrapper=$1
+        shift
+    fi
+    if test -z "$added_compilerwrapper"; then
+        added_compilerwrapper=/usr/local/libexec/icecc/compilerwrapper
+    fi
+    clang=1
     if test "$1" = "--gcc"; then
         shift
         added_gcc=$1
@@ -176,22 +281,59 @@ else
         added_gxx=$1
         shift
         gcc=1
-    elif test "$1" = "--clang"; then
-        shift
-        added_clang=$1
-        shift
-        added_compilerwrapper=$1
-        if test -n "$added_compilerwrapper"; then
-            # accept 2nd argument being the compilerwrapper binary, for backwards compatibility
-            shift
-        else
-            usage
-            exit 1
-        fi
-        clang=1
-    else
+    fi
+else
+    if test -z "$1"; then
         usage
         exit 1
+    fi
+    # We got just a binary, find out what compiler it is and bypass any possible wrappers.
+    # __clang__ expands to 1 if compiler is Clang
+    # __GNUC__ expands to the main version number (and is valid also with Clang)
+    test_output=$(echo "clang __clang__ gcc __GNUC__" | "$1" -E -)
+    if test $? -ne 0; then
+        echo "$1" is not a compiler.
+        exit 1
+    fi
+    if echo "$test_output" | grep -q '^clang 1 gcc.*'; then
+        clang=1
+        # With clang, -print-prog-name gives the full path to the actual clang binary,
+        # allowing to bypass any possible wrapper script etc. Note we must pass
+        # just the binary name, not full path.
+        added_clang=$($1 -print-prog-name=$(basename $1))
+        added_compilerwrapper=/usr/local/libexec/icecc/compilerwrapper
+    elif echo "$test_output" | grep -q 'clang __clang__ gcc.*'; then
+        gcc=1
+        # Gcc's -print-prog-name is useless, as it prints simply "gcc", so we have to
+        # get the location of the actual gcc binary from gcc -v output, which prints
+        # (to stderr) gcc's argv[0] as COLLECT_GCC.
+        added_gcc=$($1 -v 2>&1 | grep COLLECT_GCC= | sed 's/^COLLECT_GCC=//')
+        if test -z "$added_gcc"; then
+            echo Failed to find gcc location.
+            exit 1
+        fi
+        if ! test -x "$added_gcc"; then
+            added_gcc=$(command -v $added_gcc)
+        fi
+    else
+        echo "$1" is not a known compiler.
+        exit 1
+    fi
+    shift
+    if test -n "$1"; then
+        case "$1" in
+            --*)
+                ;; # an option, ignore
+            *)
+                # (backwards) compatibility, assume the second argument is the C++ compiler
+                added_gxx=$1
+                shift
+                ;;
+        esac
+    fi
+    if test -n "$gcc" -a -z "$added_gxx"; then
+        # guess g++ from gcc
+        added_gxx=$(echo $added_gcc | sed 's/\(.*\)gcc/\1g++/')
     fi
 fi
 
@@ -234,16 +376,70 @@ if test -n "$clang"; then
 fi
 
 extrafiles=
-while test "x$1" = "x--addfile"; do
-    shift
-    extrafiles="$extrafiles $1"
+compress_program=gzip
+compress_ext=.gz
+compress_args=
+
+while test -n "$1"; do
+
+    if test "x$1" = "x--addfile"; then
+        shift
+        extrafiles="$extrafiles $1"
+    elif test "x$1" = "x--compression"; then
+        shift
+        case "$1" in
+            none)
+                compress_ext=
+                compress_program=cat
+                ;;
+            gzip|gz)
+                compress_ext=.gz
+                compress_program=gzip
+                ;;
+            bzip2|bz2)
+                compress_ext=.bz2
+                compress_program=bzip2
+                ;;
+            zstd)
+                compress_ext=.zst
+                compress_program=zstd
+                # threads
+                compress_args=-T0
+                ;;
+            xz)
+                compress_ext=.xz
+                compress_program=xz
+                # threads
+                compress_args=-T0
+                if test -n "$ICECC_TESTS"; then
+                    compress_args="-T0 -0"
+                fi
+                ;;
+            *)
+                echo "Unknown compression type '$1'."
+                exit 1
+                ;;
+        esac
+    # MONGODB - Add out parameter support
+    elif test "x$1" = "x--out"; then
+        shift
+        out_file="$1"
+    else
+        echo "Unknown argument '$1'"
+        exit 1
+    fi
+
     shift
 done
 
-out_file=$1
-shift
+if test -n "$compress_program"; then
+    if ! command -v "$compress_program" >/dev/null; then
+        echo "Cannot find compression program '$compress_program'."
+        exit 1
+    fi
+fi
 
-tempdir=`mktemp -d /tmp/iceccenvXXXXXX`
+tempdir=$(mktemp -d /tmp/iceccenvXXXXXX)
 
 # for testing the environment is usable at all
 if test -x /bin/true; then
@@ -253,9 +449,11 @@ elif test -x /usr/bin/true; then
 fi
 
 if test -n "$gcc"; then
-    # getting compilers abs path
-    added_gcc=$(abs_path $added_gcc)
-    added_gxx=$(abs_path $added_gxx)
+    # getting compilers resolved path
+    added_gcc=$(resolve_path $added_gcc)
+    added_gxx=$(resolve_path $added_gxx)
+    # In case gcc is installed elsewhere.
+    stripprefix=$(dirname $(dirname $added_gcc))
 
     if test -z "$clang"; then
         add_file $added_gcc /usr/bin/gcc
@@ -266,28 +464,20 @@ if test -n "$gcc"; then
         add_file $added_gcc /usr/bin/gcc.bin
         add_file $added_gxx /usr/bin/g++.bin
     fi
-    add_file `$added_gcc -print-prog-name=cc1` /usr/bin/cc1
-    add_file `$added_gxx -print-prog-name=cc1plus` /usr/bin/cc1plus
-
-    gcc_as=$($added_gcc -print-prog-name=as)
-    if test "$gcc_as" = "as"; then
-      add_file /usr/bin/as
-    else
-      add_file "$gcc_as" /usr/bin/as
-    fi
-
-    gcc_objcopy=$($added_gcc -print-prog-name=objcopy)
-    if test "$gcc_objcopy" = "objcopy"; then
-      add_file /usr/bin/objcopy
-    else
-      add_file "$gcc_objcopy" /usr/bin/objcopy
-    fi
-
+    search_addfile $added_gcc cc1 /usr/bin
+    search_addfile $added_gxx cc1plus /usr/bin
+    search_addfile $added_gcc as /usr/bin
     search_addfile $added_gcc specs
     search_addfile $added_gcc liblto_plugin.so
+    search_addfile $added_gcc objcopy /usr/bin
 fi
 
 if test -n "$clang"; then
+    # getting compilers resolved path
+    orig_clang=$added_clang
+    added_clang=$(resolve_path $added_clang)
+    # In case clang is installed elsewhere.
+    stripprefix=$(dirname $(dirname $added_clang))
     add_file $added_clang /usr/bin/clang
     # HACK: Older icecream remotes have /usr/bin/{gcc|g++} hardcoded and wouldn't
     # call /usr/bin/clang at all. So include a wrapper binary that will call gcc or clang
@@ -295,104 +485,87 @@ if test -n "$clang"; then
     add_file $added_compilerwrapper /usr/bin/gcc
     add_file $added_compilerwrapper /usr/bin/g++
 
-    add_file $($added_clang -print-prog-name=as) /usr/bin/as
+    search_addfile $orig_clang as /usr/bin
+    search_addfile $orig_clang objcopy /usr/bin
 
-    if test -z "$gcc_objcopy"; then
-      add_file $($added_clang -print-prog-name=objcopy) /usr/bin/objcopy
+    # HACK: Clang4.0 and later access /proc/cpuinfo and report an error when they fail
+    # to find it, even if they use a fallback mechanism, making the error useless
+    # (at least in this case). Since the file is not really needed, create a fake one.
+    if test -d /proc; then
+        mkdir $tempdir/fakeproc
+        mkdir $tempdir/fakeproc/proc
+        touch $tempdir/fakeproc/proc/cpuinfo
+        add_file $tempdir/fakeproc/proc/cpuinfo /proc/cpuinfo
     fi
-
-    # clang always uses its internal .h files
-    clangincludes=$(dirname $($added_clang -print-file-name=include/limits.h))
-    clangprefix=$(dirname $(dirname $(abs_path $added_clang)))
-    for file in $(find $clangincludes -type f); do
-      # get path without ..
-      # readlink is not portable enough.
-      destfile=$(abs_path $file)
-      # and convert from <prefix> to /usr if needed
-      destfile=$(echo $destfile | sed "s#$clangprefix#/usr#" )
-      add_file "$file" "$destfile"
-    done
 fi
 
+# Do not do any prefix stripping on extra files, they (e.g. clang plugins) are usually
+# referred to using their original path.
+save_stripprefix="$stripprefix"
+stripprefix=
 for extrafile in $extrafiles; do
     add_file $extrafile
 done
+stripprefix="$save_stripprefix"
 
 if test "$is_darwin" = 1; then
     # add dynamic linker
     add_file /usr/lib/dyld
     add_file /usr/bin/gcc
     add_file /usr/bin/g++
-    real_file=`/usr/bin/as -micha -- < /dev/null 2>&1 | sed -n 's,^[^/]*\(/[^ :]*\).*,\1,p'`
+    real_file=$(/usr/bin/as -micha -- < /dev/null 2>&1 | sed -n 's,^[^/]*\(/[^ :]*\).*,\1,p')
     add_file $(abs_path "$real_file")
+fi
+
+if test "$is_freebsd" = 1; then
+    add_file /libexec/ld-elf.so.1
 fi
 
 # for ldconfig -r to work, ld.so.conf must not contain relative paths
 # in include directives. Make them absolute.
 if test -f /etc/ld.so.conf; then
-  tmp_ld_so_conf=`mktemp /tmp/icecc_ld_so_confXXXXXX`
+  tmp_ld_so_conf=$(mktemp /tmp/icecc_ld_so_confXXXXXX)
   while read directive path; do
     if [ "$directive" = "include" -a "${path:0:1}" != "/" ]; then
       path="/etc/$path"
     fi
     echo "$directive $path"
   done </etc/ld.so.conf >$tmp_ld_so_conf
-
-  # Hack to make mongodbtoolchain clang work.
-  echo '/opt/mongodbtoolchain/v2/lib' >> $tmp_ld_so_conf
-  echo '/opt/mongodbtoolchain/v2/lib64' >> $tmp_ld_so_conf
-
-  # Work around new directory layout for clang in ubuntu >= 16.10
-  if [ -n "$clangprefix" ]; then
-      echo "$clangprefix/lib" >> $tmp_ld_so_conf
-  fi
-
   add_file $tmp_ld_so_conf /etc/ld.so.conf
 fi
-
-for file in /etc/ld.so.conf.d/*.conf; do
-    if [ -e "$file" ]; then
-        add_file "$file"
-    else
-        # This can happen with a dangling symlink
-        echo "skipping non-existent file $file"
-    fi
-done
-
-# special case for weird multilib setups
-for dir in /lib /lib64 /usr/lib /usr/lib64; do
-    test -L $dir && cp -p $dir $tempdir$dir
-done
 
 new_target_files=
 for i in $target_files; do
  case $i in
    *=/*)
-    target=`echo $i | cut -d= -f1`
-    path=`echo $i | cut -d= -f2`
+    target=$(echo $i | cut -d= -f1)
+    path=$(echo $i | cut -d= -f2)
     ;;
    *)
     path=$i
     target=$i
     ;;
   esac
-  mkdir -p $tempdir/`dirname $target`
-  cp -p $path $tempdir/$target
-  if test -f $tempdir/$target -a -x $tempdir/$target; then
-    strip -s $tempdir/$target 2>/dev/null
+  mkdir -p $tempdir/$(dirname $target)
+  if test -x $path && objcopy -p --strip-unneeded $path $tempdir/$target 2>/dev/null; then
+    true # ok
+  elif test -x $path && objcopy -p -g $path $tempdir/$target 2>/dev/null; then
+    true # ok
+  else
+    cp -p $path $tempdir/$target
   fi
-  target=`echo $target | cut -b2-`
+  target=$(echo $target | cut -b2-)
   new_target_files="$new_target_files $target"
 done
 
-mkdir $tempdir/proc
-touch $tempdir/proc/cpuinfo
-new_target_files="$new_target_files proc/cpuinfo"
-
-if test -x /sbin/ldconfig; then
+if test -x /sbin/ldconfig -a "$is_linux" = 1; then
    mkdir -p $tempdir/var/cache/ldconfig
    /sbin/ldconfig -r $tempdir
-   new_target_files="$new_target_files etc/ld.so.cache"
+   for candidate in etc var/cache/ldconfig; do
+        test -e $tempdir/$candidate/ld.so.cache || continue;
+        new_target_files="$new_target_files $candidate/ld.so.cache"
+        break
+   done
 fi
 
 md5sum=NONE
@@ -405,33 +578,35 @@ done
 
 # now sort the files in order to make the md5sums independent
 # of ordering
-target_files=`for i in $new_target_files; do echo $i; done | sort`
-md5=`for i in $target_files; do $md5sum $tempdir/$i; done | sed -e 's/ .*$//' | $md5sum | sed -e 's/ .*$//'` || {
+target_files=$(for i in $new_target_files; do echo $i; done | sort)
+md5=$(for i in $target_files; do $md5sum $tempdir/$i; done | sed -e "s# $tempdir##" | $md5sum | sed -e 's/ .*$//') || {
   echo "Couldn't compute MD5 sum."
   exit 2
 }
 
+echo "creating $md5.tar$compress_ext"
+mydir=$(pwd)
+# MONGODB - output tarball to same directory as out_file
 if [ -n "$out_file" ]; then
-    md5="$(dirname $out_file)/$md5"
+    mydir="$(dirname $out_file)"
 fi
 
-echo "creating $md5.tar.gz"
-mydir=`pwd`
 pushd $tempdir > /dev/null
-tar -czh --numeric-owner -f "$mydir/$md5".tar.gz $target_files || {
+tar -ch --numeric-owner -f - $target_files | "$compress_program" $compress_args > "$md5".tar"$compress_ext" || {
   echo "Couldn't create archive"
   exit 3
 }
-cd ..
+popd > /dev/null
+mv "$tempdir/$md5".tar"$compress_ext" "$mydir"/
 rm -rf $tempdir
 rm -f $tmp_ld_so_conf
-popd > /dev/null
 
+# MONGODB - symlink md5 tarball to final tarball
 if [ -n "$out_file" ]; then
     echo "linking $out_file to $md5.tar.gz"
     ln -sf "$(basename "$md5.tar.gz")" "$out_file"
 fi
 
 # Print the tarball name to fd 5 (if it's open, created by whatever has invoked this)
-( echo $md5.tar.gz >&5 ) 2>/dev/null
+( echo $md5.tar"$compress_ext" >&5 ) 2>/dev/null
 exit 0
