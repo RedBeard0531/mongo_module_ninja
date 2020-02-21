@@ -678,6 +678,10 @@ class NinjaFile(object):
                 #TODO remove after CR merged
                 tests = strmap(sources)
 
+                if not tests and "MONGO_TEST_REGISTRY" in myEnv:
+                    # tests are now registered in a list in the Environment
+                    tests = strmap(myEnv["MONGO_TEST_REGISTRY"][ str(targets[0]) ])
+
             implicit_deps.extend([test_list_script, self.ninja_file])
             self.builds.append(dict(
                 rule='SCRIPT_RSP',
