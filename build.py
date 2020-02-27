@@ -483,13 +483,13 @@ class NinjaFile(object):
                 pass
             else:
                 # Ignore these for now
-                # aib targets are specific to hygienic
-                assert (str(alias) in ('dist', 'lint', 'list-aib-components', 'list-aib-targets'))
+                # list- targets are specific to hygienic
+                assert (str(alias) in ('dist', 'lint') or (str(alias).startswith("list-")))
 
         # Fix integration_tests alias to point to files rather than directories.
         # TODO remove after CR merged
         integration_tests_dir = os.path.join('build', 'integration_tests')
-        if integration_tests_dir in self.aliases['integration_tests']:
+        if 'integration_tests' in self.aliases and integration_tests_dir in self.aliases['integration_tests']:
             self.aliases['integration_tests']= [t for t in self.built_targets
                                                   if t.startswith(integration_tests_dir)]
 
