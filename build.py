@@ -61,6 +61,12 @@ AddOption('--pch',
         dest='pch',
         help='Use pre-compiled headers, incompatible with icecream')
 
+AddOption('--flatten-hygienic',
+        default=False,
+        action='store_true',
+        dest='flatten_hygienic',
+        help='Create symlinks to non-test binaries in build/install/bin')
+
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
@@ -100,6 +106,36 @@ def strmap(node_list):
     for node in node_list:
         assert isinstance(node, (str, SCons.Node.FS.Base, SCons.Node.Alias.Alias))
     return [str(node) for node in node_list]
+
+
+def get_path(node):
+    """
+    Return a fake path if necessary.
+
+    As an example Aliases use this as their target name in Ninja.
+    """
+    if hasattr(node, "get_path"):
+        return node.get_path()
+    return str(node)
+
+def src_file(node):
+    """Returns the src code file if it exists."""
+    if hasattr(node, "srcnode"):
+        src = node.srcnode()
+        if src.stat() is not None:
+            return src
+    return get_path(node)
+
+def get_dependencies(node, skip_sources=False):
+    """Return a list of dependencies for node."""
+    if skip_sources:
+        return [
+            get_path(src_file(child))
+            for child in node.children()
+            if child not in node.sources
+        ]
+    return [get_path(src_file(child)) for child in node.children()]
+
 
 def fetch_icecream_tarball():
     LINK_URL = 'http://mongodbtoolchain.build.10gen.cc/icecream/ubuntu1604/x86_64/latest'
@@ -143,6 +179,11 @@ def fetch_icecream_tarball():
 
     return local_file
 
+
+def is_interesting_flatten_target(target):
+    return "/bin/" in target and not "_test" in target and not "_bm" in target
+
+
 class NinjaFile(object):
     def __init__(self, name, env):
         self.ninja_file = name
@@ -159,6 +200,7 @@ class NinjaFile(object):
         self.unittest_shortcuts = {}
         self.unittest_skipped_shortcuts = set()
         self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
+        self.flatten_install = GetOption('flatten_hygienic')
 
         self.init_idl_dependencies()
         self.find_build_nodes()
@@ -468,6 +510,8 @@ class NinjaFile(object):
                         self.tool_commands[rule])
 
     def find_aliases(self):
+        flatten_install = GetOption('flatten_hygienic')
+
         for alias in SCons.Node.Alias.default_ans.values():
             if str(alias) in self.built_targets:
                 # For some reason we sometimes define a task then alias it to itself.
@@ -479,7 +523,18 @@ class NinjaFile(object):
 
             if alias.get_builder() == SCons.Environment.AliasBuilder:
                 # "pure" aliases
-                self.aliases[str(alias)] = [str(s) for s in alias.sources]
+                sources = []
+                for alias_source in alias.sources:
+                    alias_source_str = str(alias_source)
+
+                    # Replace the dependency of the pure aliases on install/bin with the hardlink instead
+                    # This means all install-* aliases work but also create hardlinks
+                    if flatten_install and is_interesting_flatten_target(alias_source_str):
+                        alias_source_str = os.path.basename(alias_source_str)
+
+                    sources.append(alias_source_str)
+                
+                self.aliases[str(alias)] = sources
                 pass
             else:
                 # Ignore these for now
@@ -649,8 +704,20 @@ class NinjaFile(object):
                 rule='INSTALL',
                 outputs=strmap(targets),
                 inputs=strmap(sources),
-                implicit=implicit_deps
+                implicit=get_dependencies(n)
                 ))
+
+            target_str = strmap(targets)[0]
+
+            if self.flatten_install and is_interesting_flatten_target(target_str):
+                hardlink_map = [os.path.basename(target_str)]
+                self.builds.append(dict(
+                    rule='SYMLINK',
+                    outputs=hardlink_map,
+                    inputs=strmap(targets),
+                    implicit=implicit_deps
+                    ))
+
             return
 
         if action == SCons.Tool.textfile._subst_builder.action:
@@ -1058,7 +1125,7 @@ class NinjaFile(object):
 
         ninja.newline()
         for name in sorted(self.vars):
-            ninja.variable(name, self.vars[name])
+            ninja.variable(name, self.vars[name].replace("$", "$$"))
 
         ninja.newline()
         for name in sorted(self.overrides):
@@ -1198,6 +1265,12 @@ class NinjaFile(object):
                     command = 'rm -f $out && ' + self.tool_commands['AR'],
                     pool=local_pool,
                     description = 'STATICLIB $out')
+
+            ninja.rule('SYMLINK',
+                command = 'ln -sf $in $out',
+                pool=local_pool,
+                description = 'SYMLINK $out')
+
         else:
             if 'CXX' in self.tool_commands:
                 ninja.rule('CXX',
@@ -1240,6 +1313,11 @@ class NinjaFile(object):
                     rspfile_content = self.tool_commands['SHLINK'].replace('$SHLINK ', '').replace('$out', '/OUT:$out'),
                     pool='winlink',
                     description = 'SHLINK $out')
+
+            ninja.rule('SYMLINK',
+                command = 'del $out & mklink /h $in $out',
+                pool=local_pool,
+                description = 'SYMLINK $out')
 
 
     def write_builds(self, ninja):
