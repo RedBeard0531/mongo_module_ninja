@@ -181,7 +181,7 @@ def fetch_icecream_tarball():
 
 
 def is_interesting_flatten_target(target):
-    return "/bin/" in target and not "_test" in target and not "_bm" in target
+    return ("/bin/" in target or "\\bin\\" in target) and not "_test" in target and not "_bm" in target
 
 
 class NinjaFile(object):
@@ -1315,7 +1315,7 @@ class NinjaFile(object):
                     description = 'SHLINK $out')
 
             ninja.rule('SYMLINK',
-                command = 'del $out & mklink /h $in $out',
+                command = 'cmd.exe /c del /q $out & mklink /h $out $in',
                 pool=local_pool,
                 description = 'SYMLINK $out')
 
