@@ -824,12 +824,12 @@ class NinjaFile(object):
 
         if any(str(n.executor).startswith('${TEMPFILE('+quote) for quote in ('"', "'")):
             # Capture the real action under the tempfile.
-            cmd = []
+            cmd_list = []
             def TEMPFILE(cmd_, comstr=None):
-                cmd.append(cmd_)
+                cmd_list.append(cmd_)
             myEnv['TEMPFILE'] = TEMPFILE
             myEnv.subst(str(n.executor), executor=n.executor)
-            cmd = cmd[0]
+            cmd = cmd_list[0]
             assert '(' not in cmd
             n.executor.set_action_list([Action(cmd)])
             assert len(n.executor.get_action_list()) == 1
