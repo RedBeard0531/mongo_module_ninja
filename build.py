@@ -652,11 +652,11 @@ class NinjaFile(object):
             if n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action:
                 if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
                     assert str(n.executor.post_actions[0]).startswith('Chmod(')
-                    assert 'oug+x' in str(n.executor.post_actions[0])
+                    assert 'oug+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
             elif isinstance(n.executor.action_list[0], SCons.Action.FunctionAction):
                 if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
                     assert str(n.executor.post_actions[0]).startswith('Chmod(')
-                    assert 'oug+x' in str(n.executor.post_actions[0])
+                    assert 'oug+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
             else:
                 raise ValueError("Unknown post action: %s" % (n.executor.action_list[0]))
             n.executor.post_actions = []
