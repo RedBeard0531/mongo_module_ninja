@@ -208,8 +208,9 @@ class NinjaFile(object):
         self.add_run_test_builds()
         self.set_up_complier_upgrade_check()
 
-        if env.get('_NINJA_USE_ERRCODE'):
-            self.add_error_code_check()
+        # SCons no longer enforces this at build time so we should not either
+        # if env.get('_NINJA_USE_ERRCODE'):
+        #     self.add_error_code_check()
         if env.get('_NINJA_CCACHE'):
             self.set_up_ccache()
         if env.get('_NINJA_ICECC'):
@@ -475,7 +476,13 @@ class NinjaFile(object):
                     ))
         else:
             env_flags += [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
-            env_flags += [ 'CCACHE_NOCPP2=1' ]
+
+            # CCACHE_NOCPP2 and GCC 11 do not work. Older versions of GCC work so disable it on GCC 11.
+            gcc_version_int = int(subprocess.check_output([self.globalEnv['CC'], '-dumpversion'])
+                                            .decode('utf8'))
+            if gcc_version_int != 11:
+                env_flags += [ 'CCACHE_NOCPP2=1' ]
+
             compile_flags += [ '-fdirectives-only' ]
 
             self.builds.append(dict(
@@ -533,7 +540,7 @@ class NinjaFile(object):
                         alias_source_str = os.path.basename(alias_source_str)
 
                     sources.append(alias_source_str)
-                
+
                 self.aliases[str(alias)] = sources
                 pass
             else:
@@ -1421,9 +1428,14 @@ def configure(conf, env):
     # needed to correctly handle the dependencies in ninja. This will be re-run when changing to
     # an older commit since the .ninja file depends on everything in buildscripts.
     if hasattr(errorcodes, 'list_files'):
-        if env["MONGO_VERSION"] != "0.0.0" or env["MONGO_GIT_HASH"] != "unknown":
+        # 5.1 bans MONGO_VERSION="0.0.0" because FCV is derived from MONGO_VERSION so we need to adjust the check
+        re_version_pattern = re.compile(r"\d.\d.\d")
+        if not re_version_pattern.match(env["MONGO_VERSION"]) or env["MONGO_GIT_HASH"] != "unknown":
             print("*** WARNING: to get the most out of ninja, pass these flags to scons:")
-            print('*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"')
+            if os.path.exists("etc/scons/developer_versions.vars"):
+                print('*** --variables-files=etc/scons/developer_versions.vars MONGO_GIT_HASH="unknown"')
+            else:
+                print('*** MONGO_VERSION="0.0.0" MONGO_GIT_HASH="unknown"')
             print('*** This will run the scons config less often and can make ccache more efficient')
             print('***')
         else:
