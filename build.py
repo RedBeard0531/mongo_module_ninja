@@ -639,6 +639,7 @@ class NinjaFile(object):
                 build.setdefault('implicit', []).append(self.ninja_file)
 
     def make_command(self, cmd):
+        cmd = cmd.replace("$?", "$$?")
         lines = cmd.split('\n')
         if len(lines) == 1:
             return cmd # no changes needed
@@ -856,8 +857,10 @@ class NinjaFile(object):
             return
 
         # TODO find a better way to find things that are functions
+        # August 17, 2021 - master now generates unit test executions with:
+        # $( $ICERUN $) ${SOURCES[0]} -fileNameFilter $TEST_SOURCE_FILE_NAME $UNITTEST_FLAGS
         needs_scons = (isinstance(n.executor.get_action_list()[0], SCons.Action.FunctionAction)
-                       or '(' in str(n.executor))
+                       or ('(' in str(n.executor) and not "$( $ICERUN $)" in str(n.executor)))
         if needs_scons:
             sources = [s for s in sources if not isinstance(s, SCons.Node.Python.Value)]
             self.builds.append(dict(
