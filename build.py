@@ -478,9 +478,10 @@ class NinjaFile(object):
             env_flags += [ 'ICECC_VERSION=$$(realpath "%s")' % version_file ]
 
             # CCACHE_NOCPP2 and GCC 11 do not work. Older versions of GCC work so disable it on GCC 11.
-            gcc_version_int = int(subprocess.check_output([self.globalEnv['CC'], '-dumpversion'])
-                                            .decode('utf8'))
-            if gcc_version_int != 11:
+            gcc_version_str = subprocess.check_output([self.globalEnv['CC'], '-dumpversion']).decode('utf8').strip()
+            dot_index = gcc_version_str.index(".")
+            gcc_version_int = int(gcc_version_str[0:dot_index]) if dot_index != -1 else int(gcc_version_str)
+            if gcc_version_int > 8:
                 env_flags += [ 'CCACHE_NOCPP2=1' ]
 
             compile_flags += [ '-fdirectives-only' ]
