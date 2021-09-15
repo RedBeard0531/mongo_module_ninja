@@ -40,4 +40,7 @@
 #include <memory>
 #include <string>
 
+// Needs to be included before any custom formatters like the one we have in string_data.h
+#include <fmt/printf.h>
+
 #include "mongo/db/operation_context.h"
