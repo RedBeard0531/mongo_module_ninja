@@ -424,7 +424,7 @@ class NinjaFile(object):
         # Do this before trying to compile since it is very quick and we want to alert if we are in
         # a bad state.
         for build in self.builds:
-            if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+            if build['rule'] in ('ACC', 'CC', 'CXX', 'SHCC', 'SHCXX'):
                 build.setdefault('order_only', []).append(dummy_target)
 
 
@@ -479,10 +479,10 @@ class NinjaFile(object):
 
             # CCACHE_NOCPP2 and GCC 11 do not work. Older versions of GCC work so disable it on GCC 11.
             gcc_version_str = subprocess.check_output([self.globalEnv['CC'], '-dumpversion']).decode('utf8').strip()
-            dot_index = gcc_version_str.index(".")
+            dot_index = gcc_version_str.find(".")
             gcc_version_int = int(gcc_version_str[0:dot_index]) if dot_index != -1 else int(gcc_version_str)
-            if gcc_version_int > 8:
-                env_flags += [ 'CCACHE_NOCPP2=1' ]
+            if gcc_version_int == 8:
+                 env_flags += [ 'CCACHE_NOCPP2=1' ]
 
             compile_flags += [ '-fdirectives-only' ]
 
@@ -506,7 +506,7 @@ class NinjaFile(object):
                         ' '.join(env_flags + [self.tool_commands[rule]] + compile_flags))
 
         for build in self.builds:
-            if build['rule'] in ('CC', 'CXX', 'SHCC', 'SHCXX'):
+            if build['rule'] in ('ACC', 'CC', 'CXX', 'SHCC', 'SHCXX'):
                 build.setdefault('order_only', []).append(version_file)
 
         # Run links through icerun to inform the scheduler that we are busy and to prevent running
@@ -992,9 +992,16 @@ class NinjaFile(object):
                                                .replace('$_SHLINK_TARGETS', '$out')
                                                .replace('$_SHLINK_SOURCES', '$in')
                                                .replace('$SOURCES','$in'))
+
+        # C compiler can be used to compile .c files and .S files, we create a separate rule for .S files
+        if tool == "CC" and "ASPPFLAGS" in cmd:
+            tool = "ACC"
+
         assert 'TARGET' not in cmd
         assert 'SOURCE' not in cmd
         if tool in self.tool_commands:
+            if cmd != self.tool_commands[tool]:
+                print("ERROR: same tool (%s) with different parameters  %s -- %s "  % (tool, cmd, self.tool_commands[tool]))
             assert cmd == self.tool_commands[tool]
         else:
             self.tool_commands[tool] = cmd
@@ -1062,7 +1069,7 @@ class NinjaFile(object):
         # I don't think the tradeoff is worth it.
         # For more details see: https://github.com/ninja-build/ninja/issues/1184
         targets = [t for t in strmap(targets) if not t.endswith('.dwo')]
-        toolPath = myEnv.WhereIs('$'+tool)
+        toolPath = myEnv.WhereIs('$'+(tool if tool != "ACC" else "CC"))
         assert toolPath, 'Unable to find the location of tool "%s"' % tool
 
         list_sources = strmap(sources)
@@ -1086,7 +1093,7 @@ class NinjaFile(object):
             inputs=list_sources,
             implicit=implicit_deps + libdeps + [toolPath],
             order_only=['_generated_headers']
-                       if tool in ('CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
+                       if tool in ('ACC', 'CC', 'CXX', 'SHCC', 'SHCXX', 'RC')
                        else [],
             variables=myVars,
             ))
@@ -1240,6 +1247,13 @@ class NinjaFile(object):
                     command = '%s -MMD -MF $out.d'%(self.tool_commands['CC']),
                     pool=compile_pool,
                     description = 'CC $out')
+            if 'ACC' in self.tool_commands:
+                ninja.rule('ACC',
+                    deps = 'gcc',
+                    depfile = '$out.d',
+                    command = '%s -MMD -MF $out.d'%(self.tool_commands['CC']),
+                    pool=compile_pool,
+                    description = 'ACC $out')
             if 'SHCC' in self.tool_commands:
                 ninja.rule('SHCC',
                     deps = 'gcc',
@@ -1293,6 +1307,8 @@ class NinjaFile(object):
                     deps = 'msvc',
                     command = '%s /showIncludes'%(self.tool_commands['SHCXX']),
                     description = 'SHCXX $out')
+            if 'ACC' in self.tool_commands:
+                assert False # TODO
             if 'CC' in self.tool_commands:
                 ninja.rule('CC',
                     deps = 'msvc',
