@@ -481,8 +481,8 @@ class NinjaFile(object):
             gcc_version_str = subprocess.check_output([self.globalEnv['CC'], '-dumpversion']).decode('utf8').strip()
             dot_index = gcc_version_str.find(".")
             gcc_version_int = int(gcc_version_str[0:dot_index]) if dot_index != -1 else int(gcc_version_str)
-            if gcc_version_int == 8:
-                 env_flags += [ 'CCACHE_NOCPP2=1' ]
+            #if gcc_version_int == 8:
+            #     env_flags += [ 'CCACHE_NOCPP2=1' ]
 
             compile_flags += [ '-fdirectives-only' ]
 
@@ -665,7 +665,7 @@ class NinjaFile(object):
             elif isinstance(n.executor.action_list[0], SCons.Action.FunctionAction):
                 if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
                     assert str(n.executor.post_actions[0]).startswith('Chmod(')
-                    assert 'oug+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
+                    assert 'u+x' in str(n.executor.post_actions[0]) or 'oug+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
             else:
                 raise ValueError("Unknown post action: %s" % (n.executor.action_list[0]))
             n.executor.post_actions = []
