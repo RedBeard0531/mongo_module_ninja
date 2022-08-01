@@ -35,38 +35,6 @@ except ImportError:
     import ninja_syntax
     import touch_compiler_timestamps
 
-AddOption('--link-pool-depth',
-        default=4,
-        type='int',
-        action='store',
-        dest='link-pool-depth',
-        help='WINDOWS ONLY: limit of concurrent links (default 4)')
-
-AddOption('--ninja-builddir',
-        type='str',
-        action='store',
-        dest='ninja_builddir',
-        help="Set the location of ninja's builddir for the .ninja_log and .ninja_deps files"
-             " (default is current directory)")
-
-AddOption('--icecream',
-        default=False,
-        action='store_true',
-        dest='icecream',
-        help='Use the icecream distributed compile server')
-
-AddOption('--pch',
-        default=False,
-        action='store_true',
-        dest='pch',
-        help='Use pre-compiled headers, incompatible with icecream')
-
-AddOption('--flatten-hygienic',
-        default=False,
-        action='store_true',
-        dest='flatten_hygienic',
-        help='Create symlinks to non-test binaries in build/install/bin')
-
 split_lines_script = os.path.join(my_dir, 'split_lines.py')
 subst_file_script = os.path.join(my_dir, 'subst_file.py')
 test_list_script = os.path.join(my_dir, 'test_list.py')
@@ -1399,6 +1367,39 @@ class NinjaFile(object):
         ninja.build(self.ninja_file, 'GENERATOR')
 
 def configure(conf, env):
+
+    env.AddOption('link-pool-depth',
+            default=4,
+            type='int',
+            action='store',
+            dest='link-pool-depth',
+            help='WINDOWS ONLY: limit of concurrent links (default 4)')
+
+    env.AddOption('ninja-builddir',
+            type='str',
+            action='store',
+            dest='ninja_builddir',
+            help="Set the location of ninja's builddir for the .ninja_log and .ninja_deps files"
+                " (default is current directory)")
+
+    env.AddOption('icecream',
+            default=False,
+            action='store_true',
+            dest='icecream',
+            help='Use the icecream distributed compile server')
+
+    env.AddOption('pch',
+            default=False,
+            action='store_true',
+            dest='pch',
+            help='Use pre-compiled headers, incompatible with icecream')
+
+    env.AddOption('flatten-hygienic',
+            default=False,
+            action='store_true',
+            dest='flatten_hygienic',
+            help='Create symlinks to non-test binaries in build/install/bin')
+
     if not COMMAND_LINE_TARGETS:
         print("*** ERROR: To prevent PEBKACs, the ninja module requires that you pass a target to scons.")
         print("*** You probably forgot to include build.ninja on the command line")
