@@ -169,6 +169,7 @@ class NinjaFile(object):
         self.unittest_skipped_shortcuts = set()
         self.setup_test_execution = not env.get('_NINJA_NO_TEST_EXECUTION', False)
         self.flatten_install = GetOption('flatten_hygienic')
+        self.enable_dwarf64 = GetOption('enable_dwarf64')
 
         self.init_idl_dependencies()
         self.find_build_nodes()
@@ -629,7 +630,7 @@ class NinjaFile(object):
             if n.executor.action_list[0] == SCons.Tool.textfile._subst_builder.action:
                 if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
                     assert str(n.executor.post_actions[0]).startswith('Chmod(')
-                    assert 'oug+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
+                    assert 'oug+x' in str(n.executor.post_actions[0]) or 'ugo+x' in str(n.executor.post_actions[0]) or '0755' in str(n.executor.post_actions[0])
             elif isinstance(n.executor.action_list[0], SCons.Action.FunctionAction):
                 if str(n.executor.post_actions[0]) != 'chmod 755 $TARGET':
                     assert str(n.executor.post_actions[0]).startswith('Chmod(')
@@ -1020,7 +1021,16 @@ class NinjaFile(object):
                 continue
 
             if name not in self.vars:
-                self.vars[name] = self.globalEnv.subst(word)
+                substr = self.globalEnv.subst(word)
+                if not self.enable_dwarf64:
+                    substr = substr.replace("-gdwarf64", "")
+                self.vars[name] = substr
+
+            # Strip dwarf64 under a conditional flag
+            # Clang can output dwarf64 but lldb cannot read it
+            if not self.enable_dwarf64:
+                mySubst = mySubst.replace("-gdwarf64", "")
+
             if mySubst != self.vars[name]:
                 if mySubst.startswith(self.vars[name]):
                     mySubst = '${%s}%s'%(name, mySubst[len(self.vars[name]):])
@@ -1399,6 +1409,12 @@ def configure(conf, env):
             action='store_true',
             dest='flatten_hygienic',
             help='Create symlinks to non-test binaries in build/install/bin')
+
+    env.AddOption('enable-dwarf64',
+            default=False,
+            action='store_true',
+            dest='enable_dwarf64',
+            help='If enabled, stop stripping -gdwarf64 from the build (incompatible with lldb)')
 
     if not COMMAND_LINE_TARGETS:
         print("*** ERROR: To prevent PEBKACs, the ninja module requires that you pass a target to scons.")
