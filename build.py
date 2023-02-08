@@ -586,6 +586,11 @@ class NinjaFile(object):
         for n in list(self.globalEnv.fs.Top.root._lookupDict.values()):
             if not SCons.Node.is_derived_node(n): continue
             if isinstance(n, SCons.Node.FS.Dir): continue
+
+            # Filter for site_scons/site_tools/task_limiter.py from build nodes
+            if "-stream" in str(n):
+                continue
+
             if str(n.executor).startswith('write_uuid_to_file('): continue
             if os.path.join('','sconf_temp','conftest') in str(n): continue
 
@@ -597,6 +602,7 @@ class NinjaFile(object):
                 except:
                     print()
                     print("Failed on node:", n)
+                    print("Failed on str node:", str(n.__class__))
                     print("Command:", n.executor)
                     print()
                     raise
@@ -644,7 +650,11 @@ class NinjaFile(object):
 
         assert n.has_builder()
         assert not n.side_effect
-        assert not n.side_effects
+
+        # Filter for site_scons/site_tools/task_limiter.py in side_effects
+        if n.side_effects:
+            assert len(n.side_effects) == 1
+            assert "-stream" in str(n.side_effects[0])
         assert n.builder.action
         assert n.executor
         assert not n.executor.post_actions
