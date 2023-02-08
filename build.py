@@ -436,7 +436,7 @@ class NinjaFile(object):
                     outputs=version_file,
                     implicit=[cc, self.compiler_timestamp_file],
                     variables=dict(
-                        cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} {out}'.format(
+                        cmd='{icecc_create_env} --clang {clang} {compiler_wrapper} --out {out}'.format(
                             icecc_create_env=icecc_create_env,
                             clang=os.path.realpath(cc),
                             compiler_wrapper='/bin/true', # we require a new enough iceccd.
@@ -461,7 +461,7 @@ class NinjaFile(object):
                 outputs=version_file,
                 implicit=[cc, cxx, self.compiler_timestamp_file],
                 variables=dict(
-                    cmd='{icecc_create_env} --gcc {gcc} {gxx} {out}'.format(
+                    cmd='{icecc_create_env} --gcc {gcc} {gxx} --out {out}'.format(
                         icecc_create_env=icecc_create_env,
                         gcc=os.path.realpath(cc),
                         gxx=os.path.realpath(cxx),
