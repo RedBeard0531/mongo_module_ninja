@@ -780,7 +780,7 @@ class NinjaFile(object):
             # Strip out the functions from shared library builds.
             if '$SHLINK' in str(n.executor):
                 # Linux or Windows
-                assert len(lines) == 3 or len(lines) == 5
+                assert len(lines) == 3 or len(lines) == 5 or len(lines) == 7
 
                 # Run the check now. It doesn't need to happen at runtime.
                 assert lines[0] == 'SharedFlagChecker(target, source, env)'
