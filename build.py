@@ -585,10 +585,18 @@ class NinjaFile(object):
         # exception
         for n in list(self.globalEnv.fs.Top.root._lookupDict.values()):
             if not SCons.Node.is_derived_node(n): continue
-            if isinstance(n, SCons.Node.FS.Dir): continue
+            if isinstance(n, SCons.Node.FS.Dir):
+                must_skip_dir = True
+                dir_str = str(n)
+
+                if "librdkafka" in dir_str and dir_str.endswith("include/src"):
+                    must_skip_dir = False
+
+                if must_skip_dir:
+                    continue
 
             # Filter for site_scons/site_tools/task_limiter.py from build nodes
-            if "-stream" in str(n):
+            if "-stream" in str(n) and not ".o" in str(n):
                 continue
 
             if str(n.executor).startswith('write_uuid_to_file('): continue
@@ -659,13 +667,21 @@ class NinjaFile(object):
         assert n.executor
         assert not n.executor.post_actions
         assert not n.executor.overridelist
-        assert len(n.executor.get_action_list()) == 1
 
         action = n.executor.get_action_list()[0]
         myEnv = n.executor.get_build_env()
         targets = n.executor.get_all_targets()
         sources = n.executor.get_all_sources()
         implicit_deps = strmap(n.depends)
+
+        if len(n.executor.get_action_list()) > 2:
+            print("A1: " + str(n.executor.get_action_list()[0]))
+            print("A2: " + str(n.executor.get_action_list()[1]))
+            print("targets: " + str(targets))
+            print("sources: " + str(sources))
+            print("implicit_deps: " + str(implicit_deps))
+
+        assert len(n.executor.get_action_list()) == 1 or len(n.executor.get_action_list()) == 2
 
         # Archives generated in hygienic defer their dependency generation so we need to call generator()
         if isinstance(action, SCons.Action.CommandGeneratorAction) and \
